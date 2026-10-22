@@ -1,0 +1,5 @@
+{
+  "name": "Stockii",
+  "description": "A production-grade SaaS platform for wholesale and distribution businesses. Features multi-tenancy, real-time inventory tracking, and financial ledger management.",
+  "requestFramePermissions": ["geolocation"]
+}

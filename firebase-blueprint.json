@@ -1,0 +1,210 @@
+{
+  "entities": {
+    "Organization": {
+      "title": "Organization",
+      "description": "A business workspace in Stockii",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "slug": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "settings": { "type": "object" }
+      },
+      "required": ["id", "name", "slug", "ownerId", "createdAt"]
+    },
+    "User": {
+      "title": "User",
+      "description": "A user profile in Stockii",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["uid", "email", "displayName", "createdAt"]
+    },
+    "Membership": {
+      "title": "Membership",
+      "description": "A user's membership in an organization",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "orgId": { "type": "string" },
+        "userId": { "type": "string" },
+        "role": { "type": "string", "enum": ["owner", "admin", "manager", "warehouse", "sales", "driver", "accountant", "viewer"] },
+        "joinedAt": { "type": "number" }
+      },
+      "required": ["id", "orgId", "userId", "role", "joinedAt"]
+    },
+    "Item": {
+      "title": "Item",
+      "description": "A product or SKU",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "orgId": { "type": "string" },
+        "sku": { "type": "string" },
+        "name": { "type": "string" },
+        "categoryId": { "type": "string" },
+        "unit": { "type": "string" },
+        "basePrice": { "type": "number" },
+        "sellingPrice": { "type": "number" },
+        "currentStock": { "type": "number" },
+        "reorderThreshold": { "type": "number" },
+        "isActive": { "type": "boolean" }
+      },
+      "required": ["id", "orgId", "name", "unit", "basePrice", "sellingPrice", "currentStock"]
+    },
+    "ItemCategory": {
+      "title": "ItemCategory",
+      "description": "Category for items",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "orgId": { "type": "string" },
+        "name": { "type": "string" }
+      },
+      "required": ["id", "orgId", "name"]
+    },
+    "InventoryLocation": {
+      "title": "InventoryLocation",
+      "description": "A storage location",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "orgId": { "type": "string" },
+        "name": { "type": "string" },
+        "type": { "type": "string" },
+        "isDefault": { "type": "boolean" }
+      },
+      "required": ["id", "orgId", "name", "type"]
+    },
+    "InventoryTransaction": {
+      "title": "InventoryTransaction",
+      "description": "A record of stock movement",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "orgId": { "type": "string" },
+        "itemId": { "type": "string" },
+        "type": { "type": "string" },
+        "sourceLocationId": { "type": "string" },
+        "destinationLocationId": { "type": "string" },
+        "quantity": { "type": "number" },
+        "unitCost": { "type": "number" },
+        "unitSellPrice": { "type": "number" },
+        "referenceId": { "type": "string" },
+        "userId": { "type": "string" },
+        "timestamp": { "type": "number" },
+        "status": { "type": "string" }
+      },
+      "required": ["id", "orgId", "itemId", "type", "quantity", "userId", "timestamp", "status"]
+    },
+    "Purchase": {
+      "title": "Purchase",
+      "description": "A record of stock purchase from supplier",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "orgId": { "type": "string" },
+        "supplierId": { "type": "string" },
+        "totalAmount": { "type": "number" },
+        "paidAmount": { "type": "number" },
+        "paymentType": { "type": "string" },
+        "status": { "type": "string" },
+        "timestamp": { "type": "number" }
+      },
+      "required": ["id", "orgId", "supplierId", "totalAmount", "paidAmount", "paymentType", "status", "timestamp"]
+    },
+    "Sale": {
+      "title": "Sale",
+      "description": "A record of sale to customer",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "orgId": { "type": "string" },
+        "customerId": { "type": "string" },
+        "totalAmount": { "type": "number" },
+        "paidAmount": { "type": "number" },
+        "paymentType": { "type": "string" },
+        "status": { "type": "string" },
+        "timestamp": { "type": "number" }
+      },
+      "required": ["id", "orgId", "customerId", "totalAmount", "paidAmount", "paymentType", "status", "timestamp"]
+    },
+    "Supplier": {
+      "title": "Supplier",
+      "description": "A supplier profile",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "orgId": { "type": "string" },
+        "name": { "type": "string" },
+        "balance": { "type": "number" }
+      },
+      "required": ["id", "orgId", "name", "balance"]
+    },
+    "Customer": {
+      "title": "Customer",
+      "description": "A customer profile",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "orgId": { "type": "string" },
+        "name": { "type": "string" },
+        "balance": { "type": "number" }
+      },
+      "required": ["id", "orgId", "name", "balance"]
+    }
+  },
+  "firestore": {
+    "/organizations/{orgId}": {
+      "schema": "Organization",
+      "description": "Organization details"
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile"
+    },
+    "/memberships/{membershipId}": {
+      "schema": "Membership",
+      "description": "Organization memberships"
+    },
+    "/organizations/{orgId}/items/{itemId}": {
+      "schema": "Item",
+      "description": "Organization items"
+    },
+    "/organizations/{orgId}/categories/{categoryId}": {
+      "schema": "ItemCategory",
+      "description": "Item categories"
+    },
+    "/organizations/{orgId}/locations/{locationId}": {
+      "schema": "InventoryLocation",
+      "description": "Inventory locations"
+    },
+    "/organizations/{orgId}/transactions/{transactionId}": {
+      "schema": "InventoryTransaction",
+      "description": "Inventory transactions"
+    },
+    "/organizations/{orgId}/suppliers/{supplierId}": {
+      "schema": "Supplier",
+      "description": "Suppliers"
+    },
+    "/organizations/{orgId}/customers/{customerId}": {
+      "schema": "Customer",
+      "description": "Customers"
+    },
+    "/organizations/{orgId}/purchases/{purchaseId}": {
+      "schema": "Purchase",
+      "description": "Purchases"
+    },
+    "/organizations/{orgId}/sales/{saleId}": {
+      "schema": "Sale",
+      "description": "Sales"
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "name": "Stockii",
+  "short_name": "Stockii",
+  "description": "Bulk inventory, sales, truck stock, returns, and damages management.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fafafa",
+  "theme_color": "#f97316",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icons/stockii-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
