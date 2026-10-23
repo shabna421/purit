@@ -1,5 +1,4 @@
-import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { db } from '../firebase';
+import { supabase } from '../supabaseClient';
 import { SalesTarget } from '../types';
 
 export const salesTargetService = {
@@ -15,10 +14,17 @@ export const salesTargetService = {
     month: number
   ): Promise<SalesTarget | null> {
     const id = this.makeId(orgId, userId, year, month);
-    const ref = doc(db, 'organizations', orgId, 'salesTargets', id);
-    const snap = await getDoc(ref);
-    if (!snap.exists()) return null;
-    return snap.data() as SalesTarget;
+    const { data, error } = await supabase
+      .from('sales_targets')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (error) {
+      console.error('Error fetching sales target:', error);
+      throw new Error(error.message);
+    }
+    return data as SalesTarget | null;
   },
 
   async setTarget(
@@ -29,9 +35,9 @@ export const salesTargetService = {
     targetAmount: number
   ): Promise<SalesTarget> {
     const id = this.makeId(orgId, userId, year, month);
-    const ref = doc(db, 'organizations', orgId, 'salesTargets', id);
     const now = Date.now();
-    const existing = (await getDoc(ref)).data() as SalesTarget | undefined;
+    const existing = await this.getTarget(orgId, userId, year, month);
+
     const target: SalesTarget = {
       id,
       orgId,
@@ -42,7 +48,16 @@ export const salesTargetService = {
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };
-    await setDoc(ref, target);
+
+    const { error } = await supabase
+      .from('sales_targets')
+      .upsert(target);
+
+    if (error) {
+      console.error('Error saving sales target:', error);
+      throw new Error(error.message);
+    }
+
     return target;
   },
 };

@@ -699,11 +699,11 @@ export const CreateSalePage: React.FC = () => {
 
       const customInvoiceNumber = activeSale.isGstBill && activeSale.gstBillNumber ? activeSale.gstBillNumber : `#${activeSale.id.slice(-8).toUpperCase()}`;
 
-      const sellerName = currentOrg.settings?.storeName || currentOrg.name || 'Stockii Network';
+      const sellerName = currentOrg.settings?.storeName || currentOrg.name || 'Purit Network';
       const sellerTagline = currentOrg.settings?.tagline || 'smart inventory management';
       const sellerAddress = currentOrg.settings?.address || 'Main Warehouse\nKozhikode, Kerala - 673631';
       const sellerPhone = currentOrg.settings?.phone || '+91 98765 43210';
-      const sellerEmail = currentOrg.settings?.email || 'support@stockii.com';
+      const sellerEmail = currentOrg.settings?.email || 'support@purit.com';
       const sellerGstin = currentOrg.settings?.gstin || '32ABCDE1234F1Z5';
 
       const pdfData = {
@@ -784,11 +784,11 @@ export const CreateSalePage: React.FC = () => {
 
       const customInvoiceNumber = activeSale.isGstBill && activeSale.gstBillNumber ? activeSale.gstBillNumber : `#${activeSale.id.slice(-8).toUpperCase()}`;
 
-      const sellerName = currentOrg.settings?.storeName || currentOrg.name || 'Stockii Network';
+      const sellerName = currentOrg.settings?.storeName || currentOrg.name || 'Purit Network';
       const sellerTagline = currentOrg.settings?.tagline || 'smart inventory management';
       const sellerAddress = currentOrg.settings?.address || 'Main Warehouse\nKozhikode, Kerala - 673631';
       const sellerPhone = currentOrg.settings?.phone || '+91 98765 43210';
-      const sellerEmail = currentOrg.settings?.email || 'support@stockii.com';
+      const sellerEmail = currentOrg.settings?.email || 'support@purit.com';
       const sellerGstin = currentOrg.settings?.gstin || '32ABCDE1234F1Z5';
 
       const pdfData = {

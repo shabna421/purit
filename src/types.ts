@@ -1,5 +1,5 @@
 /**
- * Core Domain Entities for Stockii
+ * Core Domain Entities for Purit
  */
 
 export type Role = 'owner' | 'admin' | 'manager' | 'warehouse' | 'sales' | 'driver' | 'accountant' | 'viewer' | 'employee';

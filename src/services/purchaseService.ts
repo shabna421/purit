@@ -1,174 +1,244 @@
-import { 
-  collection, 
-  doc, 
-  getDocs, 
-  getDoc, 
-  setDoc, 
-  updateDoc, 
-  deleteDoc,
-  query,
-  where,
-  runTransaction,
-  orderBy
-} from 'firebase/firestore';
-import { db } from '../firebase';
+import { supabase } from '../supabaseClient';
 import { Supplier, Purchase, InventoryTransaction, PaymentRecord } from '../types';
+import { generateId, stripUndefined } from './dbUtils';
 
 export const purchaseService = {
-  async getSuppliers(orgId: string) {
-    const q = query(collection(db, `organizations/${orgId}/suppliers`), orderBy('name'));
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Supplier));
+  async getSuppliers(orgId: string): Promise<Supplier[]> {
+    const { data, error } = await supabase
+      .from('suppliers')
+      .select('*')
+      .eq('orgId', orgId)
+      .order('name');
+
+    if (error) {
+      console.error('Error fetching suppliers:', error);
+      throw new Error(error.message);
+    }
+    return (data || []) as Supplier[];
   },
 
-  async createSupplier(orgId: string, supplierData: Partial<Supplier>) {
-    const supplierRef = doc(collection(db, `organizations/${orgId}/suppliers`));
-    const newSupplier = {
+  async createSupplier(orgId: string, supplierData: Partial<Supplier>): Promise<Supplier> {
+    const newId = generateId();
+    const newSupplier: Supplier = stripUndefined({
       ...supplierData,
-      id: supplierRef.id,
+      id: newId,
       orgId,
       balance: supplierData.balance || 0,
-    };
-    await setDoc(supplierRef, newSupplier);
+    }) as Supplier;
+
+    const { error } = await supabase
+      .from('suppliers')
+      .insert(newSupplier);
+
+    if (error) {
+      console.error('Error creating supplier:', error);
+      throw new Error(error.message);
+    }
     return newSupplier;
   },
 
-  async updateSupplier(orgId: string, supplierId: string, supplierData: Partial<Supplier>) {
-    const supplierRef = doc(db, `organizations/${orgId}/suppliers`, supplierId);
-    await updateDoc(supplierRef, supplierData);
+  async updateSupplier(orgId: string, supplierId: string, supplierData: Partial<Supplier>): Promise<void> {
+    const { error } = await supabase
+      .from('suppliers')
+      .update(stripUndefined(supplierData))
+      .eq('id', supplierId)
+      .eq('orgId', orgId);
+
+    if (error) {
+      console.error('Error updating supplier:', error);
+      throw new Error(error.message);
+    }
   },
 
-  async deleteSupplier(orgId: string, supplierId: string) {
-    const supplierRef = doc(db, `organizations/${orgId}/suppliers`, supplierId);
-    const supplierSnap = await getDoc(supplierRef);
-    if (!supplierSnap.exists()) throw new Error('Supplier not found');
+  async deleteSupplier(orgId: string, supplierId: string): Promise<void> {
+    const { data: supplier, error: fetchError } = await supabase
+      .from('suppliers')
+      .select('*')
+      .eq('id', supplierId)
+      .eq('orgId', orgId)
+      .maybeSingle();
 
-    const supplier = supplierSnap.data() as Supplier;
+    if (fetchError || !supplier) {
+      throw new Error('Supplier not found');
+    }
+
     if ((supplier.balance || 0) > 0) {
       throw new Error('Supplier cannot be deleted while a pending amount exists');
     }
 
-    await deleteDoc(supplierRef);
+    const { error: deleteError } = await supabase
+      .from('suppliers')
+      .delete()
+      .eq('id', supplierId)
+      .eq('orgId', orgId);
+
+    if (deleteError) {
+      console.error('Error deleting supplier:', deleteError);
+      throw new Error(deleteError.message);
+    }
   },
 
-  async createPurchase(orgId: string, purchaseData: Omit<Purchase, 'id' | 'timestamp'>) {
-    return await runTransaction(db, async (transaction) => {
-      const purchaseRef = doc(collection(db, `organizations/${orgId}/purchases`));
-      const supplierRef = doc(db, `organizations/${orgId}/suppliers`, purchaseData.supplierId);
-      
-      const supplierSnap = await transaction.get(supplierRef);
-      if (!supplierSnap.exists()) throw new Error('Supplier not found');
-      
-      const currentBalance = supplierSnap.data().balance || 0;
-      const outstandingAmount = purchaseData.totalAmount - purchaseData.paidAmount;
+  async createPurchase(orgId: string, purchaseData: Omit<Purchase, 'id' | 'timestamp'>): Promise<Purchase> {
+    // 1. Fetch supplier
+    const { data: supplier, error: supplierError } = await supabase
+      .from('suppliers')
+      .select('*')
+      .eq('id', purchaseData.supplierId)
+      .eq('orgId', orgId)
+      .maybeSingle();
 
-      const lineSnapshots = await Promise.all(
-        purchaseData.items.map(async (line) => {
-          const itemRef = doc(db, `organizations/${orgId}/items`, line.itemId);
-          const summaryRef = doc(db, 'organizations', orgId, 'stockSummaries', `${line.itemId}_${purchaseData.locationId}`);
+    if (supplierError || !supplier) {
+      throw new Error('Supplier not found');
+    }
 
-          const [itemSnap, summarySnap] = await Promise.all([
-            transaction.get(itemRef),
-            transaction.get(summaryRef)
-          ]);
+    const currentBalance = supplier.balance || 0;
+    const outstandingAmount = purchaseData.totalAmount - purchaseData.paidAmount;
 
-          if (!itemSnap.exists()) throw new Error(`Item ${line.itemId} not found`);
+    // 2. Fetch all items and their location stock
+    const lineDetails = await Promise.all(
+      purchaseData.items.map(async (line) => {
+        const { data: item, error: itemErr } = await supabase
+          .from('items')
+          .select('*')
+          .eq('id', line.itemId)
+          .eq('orgId', orgId)
+          .maybeSingle();
 
-          return {
-            line,
-            itemRef,
-            summaryRef,
-            currentStock: itemSnap.data().currentStock || 0,
-            currentLocStock: summarySnap.exists() ? summarySnap.data().quantity : 0
-          };
-        })
-      );
+        if (itemErr || !item) {
+          throw new Error(`Item ${line.itemId} not found`);
+        }
 
-      // 1. Create Purchase Record
-      const purchase: Purchase = {
-        ...purchaseData,
-        id: purchaseRef.id,
-        previousDueAmount: Math.max(currentBalance, 0),
-        timestamp: Date.now(),
-      };
-      transaction.set(purchaseRef, purchase);
+        const summaryId = `${line.itemId}_${purchaseData.locationId}`;
+        const { data: summary } = await supabase
+          .from('stock_summaries')
+          .select('*')
+          .eq('id', summaryId)
+          .maybeSingle();
 
-      // 2. Update Supplier Balance if credit
-      if (outstandingAmount > 0) {
-        const nextBalance = currentBalance + outstandingAmount;
-        transaction.update(supplierRef, {
-          balance: nextBalance
-        });
-
-        const paymentRef = doc(collection(db, `organizations/${orgId}/payments`));
-        const paymentRecord: PaymentRecord = {
-          id: paymentRef.id,
-          orgId,
-          entityType: 'supplier',
-          entityId: purchaseData.supplierId,
-          amount: outstandingAmount,
-          direction: 'purchase_due_added',
-          balanceAfter: nextBalance,
-          paymentMethod: purchaseData.paymentType === 'cash' ? 'cash' : 'bank',
-          referenceId: purchaseRef.id,
-          timestamp: Date.now(),
-          userId: purchaseData.userId,
-          notes: purchaseData.notes || 'Product purchase',
+        return {
+          line,
+          item,
+          summaryId,
+          currentStock: item.currentStock || 0,
+          currentLocStock: summary?.quantity || 0,
         };
-        transaction.set(paymentRef, paymentRecord);
-      }
-
-      // 3. Update Stock for each item
-      for (const { line, itemRef, summaryRef, currentStock, currentLocStock } of lineSnapshots) {
-        transaction.update(itemRef, {
-          currentStock: currentStock + line.quantity,
-          basePrice: line.unitCost // Update buying price
-        });
-
-        transaction.set(summaryRef, {
-          itemId: line.itemId,
-          locationId: purchaseData.locationId,
-          quantity: currentLocStock + line.quantity
-        }, { merge: true });
-
-        // 4. Create Inventory Transaction
-        const invTransRef = doc(collection(db, `organizations/${orgId}/transactions`));
-        const invTrans: InventoryTransaction = {
-          id: invTransRef.id,
-          orgId,
-          itemId: line.itemId,
-          type: 'PURCHASE_IN',
-          destinationLocationId: purchaseData.locationId,
-          quantity: line.quantity,
-          unitCost: line.unitCost,
-          referenceId: purchaseRef.id,
-          userId: purchaseData.userId,
-          timestamp: Date.now(),
-          status: 'completed'
-        };
-        transaction.set(invTransRef, invTrans);
-      }
-
-      return purchase;
-    });
-  },
-
-  async getPurchases(orgId: string) {
-    const q = query(collection(db, `organizations/${orgId}/purchases`), orderBy('timestamp', 'desc'));
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Purchase));
-  },
-
-  async getSupplierPaymentRecords(orgId: string, supplierId: string) {
-    const q = query(
-      collection(db, `organizations/${orgId}/payments`),
-      where('entityType', '==', 'supplier'),
-      where('entityId', '==', supplierId)
+      })
     );
-    const snapshot = await getDocs(q);
-    return snapshot.docs
-      .map((entry) => ({ id: entry.id, ...entry.data() } as PaymentRecord))
-      .sort((a, b) => b.timestamp - a.timestamp);
+
+    // 3. Create Purchase record
+    const purchaseId = generateId();
+    const purchase: Purchase = {
+      ...purchaseData,
+      id: purchaseId,
+      previousDueAmount: Math.max(currentBalance, 0),
+      timestamp: Date.now(),
+    };
+
+    const { error: purchaseError } = await supabase
+      .from('purchases')
+      .insert(purchase);
+
+    if (purchaseError) {
+      console.error('Error creating purchase:', purchaseError);
+      throw new Error(purchaseError.message);
+    }
+
+    // 4. Update Supplier balance if credit
+    if (outstandingAmount > 0) {
+      const nextBalance = currentBalance + outstandingAmount;
+      await supabase
+        .from('suppliers')
+        .update({ balance: nextBalance })
+        .eq('id', purchaseData.supplierId)
+        .eq('orgId', orgId);
+
+      const paymentRecord: PaymentRecord = {
+        id: generateId(),
+        orgId,
+        entityType: 'supplier',
+        entityId: purchaseData.supplierId,
+        amount: outstandingAmount,
+        direction: 'purchase_due_added',
+        balanceAfter: nextBalance,
+        paymentMethod: purchaseData.paymentType === 'cash' ? 'cash' : 'bank',
+        referenceId: purchase.id,
+        timestamp: Date.now(),
+        userId: purchaseData.userId,
+        notes: purchaseData.notes || 'Product purchase',
+      };
+
+      await supabase.from('payments').insert(paymentRecord);
+    }
+
+    // 5. Update Stock and generate Inventory Transactions for each item
+    for (const { line, item, summaryId, currentStock, currentLocStock } of lineDetails) {
+      // Update item current stock and base price
+      await supabase
+        .from('items')
+        .update({
+          currentStock: currentStock + line.quantity,
+          basePrice: line.unitCost,
+        })
+        .eq('id', line.itemId)
+        .eq('orgId', orgId);
+
+      // Upsert location-wise stock
+      await supabase.from('stock_summaries').upsert({
+        id: summaryId,
+        orgId,
+        itemId: line.itemId,
+        locationId: purchaseData.locationId,
+        quantity: currentLocStock + line.quantity,
+      });
+
+      // Insert transaction audit
+      const invTrans: InventoryTransaction = {
+        id: generateId(),
+        orgId,
+        itemId: line.itemId,
+        type: 'PURCHASE_IN',
+        destinationLocationId: purchaseData.locationId,
+        quantity: line.quantity,
+        unitCost: line.unitCost,
+        referenceId: purchase.id,
+        userId: purchaseData.userId,
+        timestamp: Date.now(),
+        status: 'completed',
+      };
+      await supabase.from('transactions').insert(invTrans);
+    }
+
+    return purchase;
+  },
+
+  async getPurchases(orgId: string): Promise<Purchase[]> {
+    const { data, error } = await supabase
+      .from('purchases')
+      .select('*')
+      .eq('orgId', orgId)
+      .order('timestamp', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching purchases:', error);
+      throw new Error(error.message);
+    }
+    return (data || []) as Purchase[];
+  },
+
+  async getSupplierPaymentRecords(orgId: string, supplierId: string): Promise<PaymentRecord[]> {
+    const { data, error } = await supabase
+      .from('payments')
+      .select('*')
+      .eq('orgId', orgId)
+      .eq('entityType', 'supplier')
+      .eq('entityId', supplierId)
+      .order('timestamp', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching supplier payment records:', error);
+      throw new Error(error.message);
+    }
+    return (data || []) as PaymentRecord[];
   },
 
   async createSupplierBalanceTransaction(
@@ -181,105 +251,116 @@ export const purchaseService = {
       paymentMethod?: 'cash' | 'bank' | 'cheque';
       notes?: string;
     }
-  ) {
-    return await runTransaction(db, async (transaction) => {
-      const supplierRef = doc(db, `organizations/${orgId}/suppliers`, data.supplierId);
-      const paymentRef = doc(collection(db, `organizations/${orgId}/payments`));
-      const supplierSnap = await transaction.get(supplierRef);
+  ): Promise<PaymentRecord> {
+    const { data: supplier, error: fetchError } = await supabase
+      .from('suppliers')
+      .select('*')
+      .eq('id', data.supplierId)
+      .eq('orgId', orgId)
+      .maybeSingle();
 
-      if (!supplierSnap.exists()) throw new Error('Supplier not found');
-      if (!Number.isFinite(data.amount) || data.amount <= 0) {
-        throw new Error('Amount must be greater than zero');
+    if (fetchError || !supplier) {
+      throw new Error('Supplier not found');
+    }
+    if (!Number.isFinite(data.amount) || data.amount <= 0) {
+      throw new Error('Amount must be greater than zero');
+    }
+
+    const currentBalance = supplier.balance || 0;
+    let balanceDelta = 0;
+    let direction: PaymentRecord['direction'] = 'payment_made';
+
+    if (data.action === 'add-due') {
+      balanceDelta = data.amount;
+      direction = 'balance_added';
+    } else if (data.action === 'write-off') {
+      if (data.amount > currentBalance) {
+        throw new Error('Write-off amount cannot exceed the current supplier balance');
       }
-
-      const supplier = supplierSnap.data() as Supplier;
-      const currentBalance = supplier.balance || 0;
-
-      let balanceDelta = 0;
-      let direction: PaymentRecord['direction'] = 'payment_made';
-
-      if (data.action === 'add-due') {
-        balanceDelta = data.amount;
-        direction = 'balance_added';
-      } else if (data.action === 'write-off') {
-        if (data.amount > currentBalance) {
-          throw new Error('Write-off amount cannot exceed the current supplier balance');
-        }
-        balanceDelta = -data.amount;
-        direction = 'write_off';
-      } else {
-        // 'pay-supplier'
-        if (data.amount > currentBalance) {
-          throw new Error('Payment amount cannot exceed the current supplier balance');
-        }
-        balanceDelta = -data.amount;
-        direction = 'payment_made';
+      balanceDelta = -data.amount;
+      direction = 'write_off';
+    } else {
+      if (data.amount > currentBalance) {
+        throw new Error('Payment amount cannot exceed the current supplier balance');
       }
+      balanceDelta = -data.amount;
+      direction = 'payment_made';
+    }
 
-      const nextBalance = currentBalance + balanceDelta;
+    const nextBalance = currentBalance + balanceDelta;
 
-      transaction.update(supplierRef, {
-        balance: nextBalance,
-      });
+    await supabase
+      .from('suppliers')
+      .update({ balance: nextBalance })
+      .eq('id', data.supplierId)
+      .eq('orgId', orgId);
 
-      const paymentRecord: PaymentRecord = {
-        id: paymentRef.id,
-        orgId,
-        entityType: 'supplier',
-        entityId: data.supplierId,
-        amount: data.amount,
-        direction,
-        balanceAfter: nextBalance,
-        paymentMethod: data.paymentMethod || 'cash',
-        timestamp: Date.now(),
-        userId,
-        notes: data.notes || '',
-      };
+    const paymentRecord: PaymentRecord = {
+      id: generateId(),
+      orgId,
+      entityType: 'supplier',
+      entityId: data.supplierId,
+      amount: data.amount,
+      direction,
+      balanceAfter: nextBalance,
+      paymentMethod: data.paymentMethod || 'cash',
+      timestamp: Date.now(),
+      userId,
+      notes: data.notes || '',
+    };
 
-      transaction.set(paymentRef, paymentRecord);
+    const { error: insertError } = await supabase
+      .from('payments')
+      .insert(paymentRecord);
 
-      return paymentRecord;
-    });
+    if (insertError) {
+      console.error('Error creating supplier payment record:', insertError);
+      throw new Error(insertError.message);
+    }
+
+    return paymentRecord;
   },
 
-  async recalculateSupplierBalanceAndHistory(orgId: string, supplierId: string) {
-    const supplierRef = doc(db, `organizations/${orgId}/suppliers`, supplierId);
-    const supplierSnap = await getDoc(supplierRef);
-    if (!supplierSnap.exists()) throw new Error('Supplier not found');
+  async recalculateSupplierBalanceAndHistory(orgId: string, supplierId: string): Promise<void> {
+    const { data: supplier, error: supErr } = await supabase
+      .from('suppliers')
+      .select('*')
+      .eq('id', supplierId)
+      .eq('orgId', orgId)
+      .maybeSingle();
 
-    const purchasesQuery = query(collection(db, `organizations/${orgId}/purchases`), where('supplierId', '==', supplierId));
-    const paymentsQuery = query(
-      collection(db, `organizations/${orgId}/payments`),
-      where('entityType', '==', 'supplier'),
-      where('entityId', '==', supplierId)
-    );
+    if (supErr || !supplier) {
+      throw new Error('Supplier not found');
+    }
 
-    const [purchasesSnap, paymentsSnap] = await Promise.all([
-      getDocs(purchasesQuery),
-      getDocs(paymentsQuery),
+    const [purchasesRes, paymentsRes] = await Promise.all([
+      supabase.from('purchases').select('*').eq('orgId', orgId).eq('supplierId', supplierId),
+      supabase.from('payments').select('*').eq('orgId', orgId).eq('entityType', 'supplier').eq('entityId', supplierId),
     ]);
 
-    const purchasesData = purchasesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Purchase));
-    const paymentsData = paymentsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as PaymentRecord));
+    const purchasesData = (purchasesRes.data || []) as Purchase[];
+    const paymentsData = (paymentsRes.data || []) as PaymentRecord[];
 
-    const existingPaymentRefs = new Set(paymentsData.filter(p => p.referenceId).map(p => p.referenceId as string));
+    const existingPaymentRefs = new Set(
+      paymentsData.filter((p) => p.referenceId).map((p) => p.referenceId as string)
+    );
 
-    const paymentEntries = paymentsData.map(p => ({
+    const paymentEntries = paymentsData.map((p) => ({
       id: p.id,
       isPayment: true,
       timestamp: p.timestamp,
       amount: p.amount,
-      tone: p.direction === 'payment_made' || p.direction === 'write_off' ? 'decrease' : 'increase'
+      tone: p.direction === 'payment_made' || p.direction === 'write_off' ? 'decrease' : 'increase',
     }));
 
     const inferredPurchases = purchasesData
-      .filter(purchase => purchase.totalAmount > purchase.paidAmount && !existingPaymentRefs.has(purchase.id))
-      .map(purchase => ({
-        id: purchase.id,
+      .filter((p) => p.totalAmount > p.paidAmount && !existingPaymentRefs.has(p.id))
+      .map((p) => ({
+        id: p.id,
         isPayment: false,
-        timestamp: purchase.timestamp,
-        amount: purchase.totalAmount - purchase.paidAmount,
-        tone: 'increase'
+        timestamp: p.timestamp,
+        amount: p.totalAmount - p.paidAmount,
+        tone: 'increase',
       }));
 
     const merged = [...paymentEntries, ...inferredPurchases].sort((a, b) => a.timestamp - b.timestamp);
@@ -287,7 +368,7 @@ export const purchaseService = {
     let runningBalance = 0;
     const paymentUpdates: Array<{ id: string; balanceAfter: number }> = [];
 
-    merged.forEach(entry => {
+    merged.forEach((entry) => {
       const diff = entry.amount;
       runningBalance += entry.tone === 'increase' ? diff : -diff;
       runningBalance = Math.max(runningBalance, 0);
@@ -297,114 +378,158 @@ export const purchaseService = {
       }
     });
 
-    await runTransaction(db, async (transaction) => {
-      transaction.update(supplierRef, { balance: runningBalance });
-      paymentUpdates.forEach(update => {
-        const ref = doc(db, `organizations/${orgId}/payments`, update.id);
-        transaction.update(ref, { balanceAfter: update.balanceAfter });
-      });
-    });
+    await supabase
+      .from('suppliers')
+      .update({ balance: runningBalance })
+      .eq('id', supplierId)
+      .eq('orgId', orgId);
+
+    for (const update of paymentUpdates) {
+      await supabase
+        .from('payments')
+        .update({ balanceAfter: update.balanceAfter })
+        .eq('id', update.id)
+        .eq('orgId', orgId);
+    }
   },
 
-  async updateSupplierPaymentRecord(orgId: string, paymentId: string, updates: {
-    amount: number;
-    notes: string;
-    timestamp: number;
-    paymentMethod: PaymentRecord['paymentMethod'];
-    direction: PaymentRecord['direction'];
-  }) {
+  async updateSupplierPaymentRecord(
+    orgId: string,
+    paymentId: string,
+    updates: {
+      amount: number;
+      notes: string;
+      timestamp: number;
+      paymentMethod: PaymentRecord['paymentMethod'];
+      direction: PaymentRecord['direction'];
+    }
+  ): Promise<void> {
     if (paymentId.startsWith('mock-purchase-')) {
       const purchaseId = paymentId.replace('mock-purchase-', '');
-      const purchaseRef = doc(db, `organizations/${orgId}/purchases`, purchaseId);
-      const purchaseSnap = await getDoc(purchaseRef);
-      if (!purchaseSnap.exists()) throw new Error('Purchase not found');
-      const purchase = purchaseSnap.data() as Purchase;
-      const supplierId = purchase.supplierId;
+      const { data: purchase, error: pErr } = await supabase
+        .from('purchases')
+        .select('*')
+        .eq('id', purchaseId)
+        .eq('orgId', orgId)
+        .maybeSingle();
 
-      await runTransaction(db, async (transaction) => {
-        const newPaidAmount = Math.max(0, purchase.totalAmount - updates.amount);
-        transaction.update(purchaseRef, {
+      if (pErr || !purchase) throw new Error('Purchase not found');
+      const supplierId = purchase.supplierId;
+      const newPaidAmount = Math.max(0, purchase.totalAmount - updates.amount);
+
+      await supabase
+        .from('purchases')
+        .update({
           paidAmount: newPaidAmount,
           notes: updates.notes,
           timestamp: updates.timestamp,
-          paymentType: updates.paymentMethod === 'cash' ? 'cash' : 'bank'
-        });
-      });
+          paymentType: updates.paymentMethod === 'cash' ? 'cash' : 'bank',
+        })
+        .eq('id', purchaseId)
+        .eq('orgId', orgId);
 
       await this.recalculateSupplierBalanceAndHistory(orgId, supplierId);
       return;
     }
 
-    const paymentRef = doc(db, `organizations/${orgId}/payments`, paymentId);
-    const paymentSnap = await getDoc(paymentRef);
-    if (!paymentSnap.exists()) throw new Error('Transaction not found');
-    const paymentData = paymentSnap.data() as PaymentRecord;
+    const { data: paymentData, error: payErr } = await supabase
+      .from('payments')
+      .select('*')
+      .eq('id', paymentId)
+      .eq('orgId', orgId)
+      .maybeSingle();
+
+    if (payErr || !paymentData) throw new Error('Transaction not found');
     const supplierId = paymentData.entityId;
 
-    await runTransaction(db, async (transaction) => {
-      if (paymentData.referenceId && paymentData.direction === 'purchase_due_added') {
-        const purchaseRef = doc(db, `organizations/${orgId}/purchases`, paymentData.referenceId);
-        const purchaseSnap = await transaction.get(purchaseRef);
-        if (purchaseSnap.exists()) {
-          const purchase = purchaseSnap.data() as Purchase;
-          const newPaidAmount = Math.max(0, purchase.totalAmount - updates.amount);
-          transaction.update(purchaseRef, {
-            paidAmount: newPaidAmount
-          });
-        }
-      }
+    if (paymentData.referenceId && paymentData.direction === 'purchase_due_added') {
+      const { data: purchase } = await supabase
+        .from('purchases')
+        .select('*')
+        .eq('id', paymentData.referenceId)
+        .eq('orgId', orgId)
+        .maybeSingle();
 
-      transaction.update(paymentRef, {
+      if (purchase) {
+        const newPaidAmount = Math.max(0, purchase.totalAmount - updates.amount);
+        await supabase
+          .from('purchases')
+          .update({ paidAmount: newPaidAmount })
+          .eq('id', paymentData.referenceId)
+          .eq('orgId', orgId);
+      }
+    }
+
+    await supabase
+      .from('payments')
+      .update({
         amount: updates.amount,
         notes: updates.notes,
         timestamp: updates.timestamp,
         paymentMethod: updates.paymentMethod,
-        direction: updates.direction
-      });
-    });
+        direction: updates.direction,
+      })
+      .eq('id', paymentId)
+      .eq('orgId', orgId);
 
     await this.recalculateSupplierBalanceAndHistory(orgId, supplierId);
   },
 
-  async deleteSupplierPaymentRecord(orgId: string, paymentId: string) {
+  async deleteSupplierPaymentRecord(orgId: string, paymentId: string): Promise<void> {
     if (paymentId.startsWith('mock-purchase-')) {
       const purchaseId = paymentId.replace('mock-purchase-', '');
-      const purchaseRef = doc(db, `organizations/${orgId}/purchases`, purchaseId);
-      const purchaseSnap = await getDoc(purchaseRef);
-      if (!purchaseSnap.exists()) throw new Error('Purchase not found');
-      const purchase = purchaseSnap.data() as Purchase;
+      const { data: purchase, error: pErr } = await supabase
+        .from('purchases')
+        .select('*')
+        .eq('id', purchaseId)
+        .eq('orgId', orgId)
+        .maybeSingle();
+
+      if (pErr || !purchase) throw new Error('Purchase not found');
       const supplierId = purchase.supplierId;
 
-      await runTransaction(db, async (transaction) => {
-        transaction.update(purchaseRef, {
-          paidAmount: purchase.totalAmount
-        });
-      });
+      await supabase
+        .from('purchases')
+        .update({ paidAmount: purchase.totalAmount })
+        .eq('id', purchaseId)
+        .eq('orgId', orgId);
 
       await this.recalculateSupplierBalanceAndHistory(orgId, supplierId);
       return;
     }
 
-    const paymentRef = doc(db, `organizations/${orgId}/payments`, paymentId);
-    const paymentSnap = await getDoc(paymentRef);
-    if (!paymentSnap.exists()) throw new Error('Transaction not found');
-    const paymentData = paymentSnap.data() as PaymentRecord;
+    const { data: paymentData, error: payErr } = await supabase
+      .from('payments')
+      .select('*')
+      .eq('id', paymentId)
+      .eq('orgId', orgId)
+      .maybeSingle();
+
+    if (payErr || !paymentData) throw new Error('Transaction not found');
     const supplierId = paymentData.entityId;
 
-    await runTransaction(db, async (transaction) => {
-      if (paymentData.referenceId && paymentData.direction === 'purchase_due_added') {
-        const purchaseRef = doc(db, `organizations/${orgId}/purchases`, paymentData.referenceId);
-        const purchaseSnap = await transaction.get(purchaseRef);
-        if (purchaseSnap.exists()) {
-          const purchase = purchaseSnap.data() as Purchase;
-          transaction.update(purchaseRef, {
-            paidAmount: purchase.totalAmount
-          });
-        }
-      }
+    if (paymentData.referenceId && paymentData.direction === 'purchase_due_added') {
+      const { data: purchase } = await supabase
+        .from('purchases')
+        .select('*')
+        .eq('id', paymentData.referenceId)
+        .eq('orgId', orgId)
+        .maybeSingle();
 
-      transaction.delete(paymentRef);
-    });
+      if (purchase) {
+        await supabase
+          .from('purchases')
+          .update({ paidAmount: purchase.totalAmount })
+          .eq('id', paymentData.referenceId)
+          .eq('orgId', orgId);
+      }
+    }
+
+    await supabase
+      .from('payments')
+      .delete()
+      .eq('id', paymentId)
+      .eq('orgId', orgId);
 
     await this.recalculateSupplierBalanceAndHistory(orgId, supplierId);
   },

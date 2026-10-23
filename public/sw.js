@@ -1,5 +1,5 @@
-const CACHE_NAME = 'stockii-shell-v2';
-const APP_SHELL = ['/', '/manifest.webmanifest', '/icons/stockii-icon.svg'];
+const CACHE_NAME = 'purit-shell-v2';
+const APP_SHELL = ['/', '/manifest.webmanifest', '/icons/purit-icon.svg'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

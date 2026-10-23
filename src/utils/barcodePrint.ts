@@ -6,7 +6,7 @@
  * ── WHY A BLOB URL INSTEAD OF A REACT ROUTE ──────────────────────────────
  *
  * Opening a React SPA route via window.open() forces the full app to bootstrap
- * (Firebase auth, context providers, JS bundle evaluation) before the barcode
+ * (Supabase auth, context providers, JS bundle evaluation) before the barcode
  * is even painted. On Android, the OS print pipeline captures the page within
  * a tight window after the tab opens; if the content isn't stable by then, it
  * shows: "There was a problem printing the page."

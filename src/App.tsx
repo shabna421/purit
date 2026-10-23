@@ -91,370 +91,7 @@ const navEntries: NavEntry[] = [
 ];
 
 function LoginScreen() {
-  const { login, loginWithEmail, signupWithEmail, getSignInMethodsForEmailAddress, sendPasswordReset } = useAuth();
-  const { error: notifyError, success } = useNotifications();
-  const [mode, setMode] = React.useState<'signin' | 'signup' | 'forgot'>('signin');
-  const [name, setName] = React.useState('');
-  const [email, setEmail] = React.useState('');
-  const [password, setPassword] = React.useState('');
-  const [confirmPassword, setConfirmPassword] = React.useState('');
-  const [submitting, setSubmitting] = React.useState(false);
-  const [checkingMethods, setCheckingMethods] = React.useState(false);
-  const [resettingPassword, setResettingPassword] = React.useState(false);
-  const [resetSuccessMessage, setResetSuccessMessage] = React.useState('');
-  const [detectedMethods, setDetectedMethods] = React.useState<string[] | null>(null);
-  const [checkedEmail, setCheckedEmail] = React.useState('');
-
-  const normalizedEmail = email.trim().toLowerCase();
-  const hasValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail);
-
-  const detectSignInMethods = React.useCallback(async (targetEmail: string) => {
-    const normalizedTarget = targetEmail.trim().toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedTarget)) {
-      setDetectedMethods(null);
-      setCheckedEmail('');
-      return [];
-    }
-
-    setCheckingMethods(true);
-    try {
-      const methods = await getSignInMethodsForEmailAddress(normalizedTarget);
-      setDetectedMethods(methods);
-      setCheckedEmail(normalizedTarget);
-      return methods;
-    } catch (error) {
-      console.error('Failed to detect sign-in methods:', error);
-      setDetectedMethods(null);
-      setCheckedEmail(normalizedTarget);
-      return [];
-    } finally {
-      setCheckingMethods(false);
-    }
-  }, [getSignInMethodsForEmailAddress]);
-
-  React.useEffect(() => {
-    if (!hasValidEmail) {
-      setDetectedMethods(null);
-      setCheckedEmail('');
-      setCheckingMethods(false);
-      return;
-    }
-
-    const timeoutId = window.setTimeout(() => {
-      void detectSignInMethods(normalizedEmail);
-    }, 350);
-
-    return () => window.clearTimeout(timeoutId);
-  }, [detectSignInMethods, hasValidEmail, normalizedEmail]);
-
-  const resolvedMethods = checkedEmail === normalizedEmail ? (detectedMethods || []) : [];
-  const hasGoogleMethod = resolvedMethods.includes('google.com');
-  const hasPasswordMethod = resolvedMethods.includes('password');
-  const isGoogleOnlyAccount = hasGoogleMethod && !hasPasswordMethod;
-  const isExistingAccount = resolvedMethods.length > 0;
-
-  const handleEmailAuth = async (event: React.FormEvent) => {
-    event.preventDefault();
-
-    if (!email.trim() || !password.trim()) {
-      notifyError('Email and password are required');
-      return;
-    }
-
-    if (mode === 'signup') {
-      if (!name.trim()) {
-        notifyError('Full name is required for sign up');
-        return;
-      }
-
-      if (password.length < 6) {
-        notifyError('Password must be at least 6 characters');
-        return;
-      }
-
-      if (password !== confirmPassword) {
-        notifyError('Passwords do not match');
-        return;
-      }
-    }
-
-    setSubmitting(true);
-    try {
-      const methods = hasValidEmail ? await detectSignInMethods(normalizedEmail) : [];
-
-      if (mode === 'signup') {
-        if (methods.length > 0 && methods.includes('password')) {
-          throw new Error('An account with this email already exists. Sign in instead, or click "Forgot Password" to reset it.');
-        }
-        await signupWithEmail(name, email, password);
-        success('Account created successfully');
-      } else {
-        await loginWithEmail(email, password);
-      }
-    } catch (error: any) {
-      console.error('Email auth failed:', error);
-      notifyError(error?.message || `Failed to ${mode === 'signup' ? 'sign up' : 'sign in'}`);
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleGoogleAuth = async () => {
-    setSubmitting(true);
-    try {
-      await login();
-    } catch (error: any) {
-      console.error('Google auth failed:', error);
-      notifyError(error?.message || 'Failed to continue with Google');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleForgotPasswordSubmit = async (event?: React.FormEvent) => {
-    if (event) event.preventDefault();
-
-    if (!normalizedEmail || !hasValidEmail) {
-      notifyError('Please enter a valid email address.');
-      return;
-    }
-
-    setResettingPassword(true);
-    setResetSuccessMessage('');
-    try {
-      await sendPasswordReset(normalizedEmail);
-      setResetSuccessMessage(
-        `Password reset link sent to ${normalizedEmail}. Check your inbox (and spam folder), click the link to set your password, then return here to sign in.`
-      );
-      success('Password reset email sent successfully!');
-    } catch (error: any) {
-      console.error('Password reset failed:', error);
-      notifyError(error?.message || 'Failed to send password reset email.');
-    } finally {
-      setResettingPassword(false);
-    }
-  };
-
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-zinc-50 p-4 font-sans">
-      <div className="max-w-md w-full space-y-6 bg-white p-8 rounded-2xl shadow-sm border border-zinc-200">
-        <div className="flex justify-center">
-          <div className="w-16 h-16 bg-orange-500 rounded-2xl flex items-center justify-center shadow-lg shadow-orange-200">
-            <Package className="text-white w-10 h-10" />
-          </div>
-        </div>
-        <div className="text-center">
-          <h2 className="mt-6 text-3xl font-bold tracking-tight text-zinc-900">Stockii</h2>
-          <p className="mt-2 text-sm text-zinc-600 italic font-serif">Brutally practical distribution management.</p>
-        </div>
-
-        {mode !== 'forgot' ? (
-          <>
-            <div className="flex rounded-2xl bg-zinc-100 p-1">
-              <button
-                type="button"
-                onClick={() => { setMode('signin'); setResetSuccessMessage(''); }}
-                className={`flex-1 rounded-xl px-4 py-2 text-sm font-semibold transition-all ${mode === 'signin' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500'}`}
-              >
-                Sign In
-              </button>
-              <button
-                type="button"
-                onClick={() => { setMode('signup'); setResetSuccessMessage(''); }}
-                className={`flex-1 rounded-xl px-4 py-2 text-sm font-semibold transition-all ${mode === 'signup' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500'}`}
-              >
-                Sign Up
-              </button>
-            </div>
-
-            <form onSubmit={handleEmailAuth} className="space-y-4">
-              {mode === 'signup' && (
-                <label className="block">
-                  <span className="mb-2 block text-xs font-bold uppercase tracking-wider text-zinc-500">Full Name</span>
-                  <div className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3">
-                    <UserIcon className="h-4 w-4 text-zinc-400" />
-                    <input
-                      type="text"
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      placeholder="Your name"
-                      className="w-full bg-transparent text-sm text-zinc-900 outline-none"
-                    />
-                  </div>
-                </label>
-              )}
-
-              <label className="block">
-                <span className="mb-2 block text-xs font-bold uppercase tracking-wider text-zinc-500">Email</span>
-                <div className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3">
-                  <Mail className="h-4 w-4 text-zinc-400" />
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="you@example.com"
-                    autoComplete="email"
-                    className="w-full bg-transparent text-sm text-zinc-900 outline-none"
-                  />
-                </div>
-              </label>
-
-              {hasValidEmail && (checkingMethods || resolvedMethods.length > 0) && (
-                <div className={`rounded-2xl border px-4 py-3 text-xs ${isGoogleOnlyAccount ? 'border-blue-200 bg-blue-50 text-blue-800' : isExistingAccount ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-zinc-200 bg-zinc-50 text-zinc-600'}`}>
-                  {checkingMethods ? (
-                    <span>Checking account status...</span>
-                  ) : mode === 'signin' ? (
-                    isGoogleOnlyAccount ? (
-                      <div className="flex gap-2 items-start">
-                        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                        <span>This email originally signed up with Google. You can sign in with Google below or click <strong>Forgot Password</strong> to set an email password.</span>
-                      </div>
-                    ) : hasGoogleMethod && hasPasswordMethod ? (
-                      <span>This email can sign in with either Google or email + password.</span>
-                    ) : hasPasswordMethod ? (
-                      <span>Account found. Enter your password to sign in.</span>
-                    ) : null
-                  ) : isExistingAccount ? (
-                    <div className="flex gap-2 items-start">
-                      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                      <span>An account with this email already exists. Switch to <strong>Sign In</strong> to log in.</span>
-                    </div>
-                  ) : null}
-                </div>
-              )}
-
-              <label className="block">
-                <span className="mb-2 block text-xs font-bold uppercase tracking-wider text-zinc-500">Password</span>
-                <div className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3">
-                  <Lock className="h-4 w-4 text-zinc-400" />
-                  <input
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder={mode === 'signup' ? 'Create a password' : 'Enter your password'}
-                    autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
-                    className="w-full bg-transparent text-sm text-zinc-900 outline-none"
-                  />
-                </div>
-              </label>
-
-              {mode === 'signup' && (
-                <label className="block">
-                  <span className="mb-2 block text-xs font-bold uppercase tracking-wider text-zinc-500">Confirm Password</span>
-                  <div className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3">
-                    <Lock className="h-4 w-4 text-zinc-400" />
-                    <input
-                      type="password"
-                      value={confirmPassword}
-                      onChange={(e) => setConfirmPassword(e.target.value)}
-                      placeholder="Repeat your password"
-                      autoComplete="new-password"
-                      className="w-full bg-transparent text-sm text-zinc-900 outline-none"
-                    />
-                  </div>
-                </label>
-              )}
-
-              <button
-                type="submit"
-                disabled={submitting}
-                className="w-full rounded-xl bg-orange-500 px-4 py-3 text-sm font-bold text-white shadow-lg shadow-orange-100 transition-all hover:bg-orange-600 disabled:opacity-50"
-              >
-                {submitting ? (mode === 'signup' ? 'Creating account...' : 'Signing in...') : (mode === 'signup' ? 'Create Account' : 'Sign In with Email')}
-              </button>
-
-              {mode === 'signin' && (
-                <div className="flex items-center justify-between gap-3 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => { setMode('forgot'); setResetSuccessMessage(''); }}
-                    className="text-xs font-semibold text-orange-600 transition hover:text-orange-700"
-                  >
-                    Forgot Password / Reset
-                  </button>
-                </div>
-              )}
-            </form>
-
-            <div className="space-y-3">
-              <div className="flex items-center gap-3">
-                <div className="h-px flex-1 bg-zinc-200" />
-                <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-zinc-400">or</span>
-                <div className="h-px flex-1 bg-zinc-200" />
-              </div>
-              <button
-                type="button"
-                onClick={handleGoogleAuth}
-                disabled={submitting}
-                className="w-full rounded-xl border border-zinc-200 bg-white px-4 py-3 text-sm font-bold text-zinc-700 transition-all hover:bg-zinc-50 disabled:opacity-50"
-              >
-                Continue with Google
-              </button>
-            </div>
-          </>
-        ) : (
-          <form onSubmit={handleForgotPasswordSubmit} className="space-y-4 animate-in fade-in duration-200">
-            <div className="border-b border-zinc-100 pb-3">
-              <h3 className="text-lg font-bold text-zinc-900">Reset Password</h3>
-              <p className="text-xs text-zinc-500 mt-1">
-                Enter your registered email address below. We'll send you a password reset link to your email.
-              </p>
-            </div>
-
-            {resetSuccessMessage ? (
-              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-xs text-emerald-800 space-y-2">
-                <p className="font-bold flex items-center gap-1.5 text-sm">
-                  <span>✉️</span> Reset Link Sent!
-                </p>
-                <p>{resetSuccessMessage}</p>
-                <button
-                  type="button"
-                  onClick={() => setMode('signin')}
-                  className="mt-2 w-full rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-700 transition"
-                >
-                  Back to Sign In
-                </button>
-              </div>
-            ) : (
-              <>
-                <label className="block">
-                  <span className="mb-2 block text-xs font-bold uppercase tracking-wider text-zinc-500">Registered Email</span>
-                  <div className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3">
-                    <Mail className="h-4 w-4 text-zinc-400" />
-                    <input
-                      type="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="you@example.com"
-                      autoComplete="email"
-                      required
-                      className="w-full bg-transparent text-sm text-zinc-900 outline-none"
-                    />
-                  </div>
-                </label>
-
-                <button
-                  type="submit"
-                  disabled={resettingPassword}
-                  className="w-full rounded-xl bg-orange-500 px-4 py-3 text-sm font-bold text-white shadow-lg shadow-orange-100 transition-all hover:bg-orange-600 disabled:opacity-50"
-                >
-                  {resettingPassword ? 'Sending Reset Email...' : 'Send Password Reset Email'}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setMode('signin')}
-                  className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-2.5 text-xs font-bold text-zinc-600 transition-all hover:bg-zinc-100"
-                >
-                  Back to Sign In
-                </button>
-              </>
-            )}
-          </form>
-        )}
-      </div>
-    </div>
-  );
+  return null;
 }
 
 function NavItem({ icon: Icon, label, to, active }: { key?: React.Key; icon: any; label: string; to: string; active: boolean }) {
@@ -555,7 +192,6 @@ function MoreSheet({
   activePath,
   onInstall,
   canInstall,
-  onLogout,
 }: {
   open: boolean;
   onClose: () => void;
@@ -563,7 +199,6 @@ function MoreSheet({
   activePath: string;
   onInstall: () => void;
   canInstall: boolean;
-  onLogout: () => void;
 }) {
   return (
     <AnimatePresence>
@@ -624,14 +259,6 @@ function MoreSheet({
                   <p className="text-sm font-semibold">Install App</p>
                 </button>
               )}
-              <button
-                type="button"
-                onClick={onLogout}
-                className="rounded-2xl border border-red-200 bg-red-50 px-4 py-4 text-left text-red-700 transition-all"
-              >
-                <LogOut className="mb-2 h-5 w-5" />
-                <p className="text-sm font-semibold">Logout</p>
-              </button>
             </div>
           </motion.div>
         </>
@@ -663,7 +290,7 @@ function InstallPromptCard({
               <Download className="h-5 w-5" />
             </div>
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-bold text-zinc-900">Install Stockii</p>
+              <p className="text-sm font-bold text-zinc-900">Install Purit</p>
               <p className="text-sm text-zinc-600">Add it to your home screen for a smoother, app-like experience.</p>
               <div className="mt-3 flex gap-2">
                 <button onClick={onInstall} className="rounded-xl bg-orange-500 px-4 py-2 text-sm font-semibold text-white">
@@ -689,7 +316,7 @@ function AppBootScreen({ message = 'Loading your workspace...' }: { message?: st
           <Package className="h-8 w-8 text-white" />
         </div>
         <div className="space-y-2">
-          <p className="text-lg font-bold text-zinc-900">Opening Stockii</p>
+          <p className="text-lg font-bold text-zinc-900">Opening Purit</p>
           <p className="text-sm text-zinc-500">{message}</p>
         </div>
         <div className="h-8 w-8 rounded-full border-4 border-orange-500 border-t-transparent animate-spin" />
@@ -699,105 +326,7 @@ function AppBootScreen({ message = 'Loading your workspace...' }: { message?: st
 }
 
 function PasswordRecoveryPrompt() {
-  const { isGoogleOnlyUser, hasEmailProvider, setPasswordForCurrentUser, logout } = useAuth();
-  const { success, error: notifyError } = useNotifications();
-  const [password, setPassword] = React.useState('');
-  const [confirmPassword, setConfirmPassword] = React.useState('');
-  const [submitting, setSubmitting] = React.useState(false);
-
-  if (!isGoogleOnlyUser || hasEmailProvider) {
-    return null;
-  }
-
-  const handleSubmit = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (password.length < 6) {
-      notifyError('Password must be at least 6 characters.');
-      return;
-    }
-    if (password !== confirmPassword) {
-      notifyError('Passwords do not match.');
-      return;
-    }
-
-    setSubmitting(true);
-    try {
-      await setPasswordForCurrentUser(password);
-      success('Password set successfully. You can now use email + password for this same account.');
-      setPassword('');
-      setConfirmPassword('');
-    } catch (error: any) {
-      console.error('Failed to link password:', error);
-      notifyError(error?.message || 'Failed to set password.');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-zinc-950/45 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-3xl border border-zinc-200 bg-white p-6 shadow-2xl">
-        <div className="mb-5 flex items-start gap-3">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-orange-100 text-orange-600">
-            <Lock className="h-6 w-6" />
-          </div>
-          <div>
-            <h3 className="text-lg font-bold text-zinc-900">Set your password now</h3>
-            <p className="mt-1 text-sm text-zinc-500">
-              This account came in through Google. Add an email password now so you can always reopen the same workspace without depending on Google sign-in.
-            </p>
-          </div>
-        </div>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <label className="block">
-            <span className="mb-2 block text-xs font-bold uppercase tracking-wider text-zinc-500">New Password</span>
-            <div className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3">
-              <Lock className="h-4 w-4 text-zinc-400" />
-              <input
-                type="password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                placeholder="At least 6 characters"
-                className="w-full bg-transparent text-sm text-zinc-900 outline-none"
-              />
-            </div>
-          </label>
-
-          <label className="block">
-            <span className="mb-2 block text-xs font-bold uppercase tracking-wider text-zinc-500">Confirm Password</span>
-            <div className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3">
-              <Lock className="h-4 w-4 text-zinc-400" />
-              <input
-                type="password"
-                value={confirmPassword}
-                onChange={(event) => setConfirmPassword(event.target.value)}
-                placeholder="Repeat your password"
-                className="w-full bg-transparent text-sm text-zinc-900 outline-none"
-              />
-            </div>
-          </label>
-
-          <div className="flex gap-3 pt-2">
-            <button
-              type="button"
-              onClick={logout}
-              className="flex-1 rounded-xl border border-zinc-200 px-4 py-3 text-sm font-semibold text-zinc-600 transition hover:bg-zinc-50"
-            >
-              Sign Out
-            </button>
-            <button
-              type="submit"
-              disabled={submitting}
-              className="flex-1 rounded-xl bg-orange-500 px-4 py-3 text-sm font-bold text-white transition hover:bg-orange-600 disabled:opacity-50"
-            >
-              {submitting ? 'Saving...' : 'Set Password'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
+  return null;
 }
 
 function AppShell({ children }: { children: React.ReactNode }) {
@@ -838,7 +367,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
     const handleInstalled = () => {
       setInstallPrompt(null);
       setShowInstallPrompt(false);
-      info('Stockii installed successfully');
+      info('Purit installed successfully');
     };
 
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
@@ -866,7 +395,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
             <Package className="text-white w-5 h-5" />
           </div>
           <div>
-            <span className="font-bold text-zinc-900 block leading-none">Stockii</span>
+            <span className="font-bold text-zinc-900 block leading-none">Purit</span>
             <span className="text-[10px] uppercase tracking-widest text-zinc-400">bulk operations</span>
           </div>
         </div>
@@ -887,7 +416,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
               <Package className="text-white w-6 h-6" />
             </div>
             <div>
-              <h1 className="font-bold text-zinc-900 leading-none">Stockii</h1>
+              <h1 className="font-bold text-zinc-900 leading-none">Purit</h1>
               <span className="text-[10px] text-zinc-400 uppercase tracking-widest font-mono">v1.0.0</span>
             </div>
           </div>
@@ -917,13 +446,6 @@ function AppShell({ children }: { children: React.ReactNode }) {
                 />
               </div>
             </div>
-            <button
-              onClick={logout}
-              className="w-full flex items-center gap-3 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-xl transition-colors"
-            >
-              <LogOut className="w-4 h-4" />
-              Logout
-            </button>
           </div>
         </div>
       </aside>
@@ -949,7 +471,6 @@ function AppShell({ children }: { children: React.ReactNode }) {
         activePath={location.pathname}
         onInstall={handleInstall}
         canInstall={Boolean(installPrompt)}
-        onLogout={logout}
       />
 
       <AnimatePresence>
@@ -988,11 +509,7 @@ function MainContent() {
   }
 
   if (authLoading) {
-    return <AppBootScreen message="Checking your account..." />;
-  }
-
-  if (!user) {
-    return <LoginScreen />;
+    return <AppBootScreen message="Opening Purit..." />;
   }
 
   const shouldKeepBooting =
@@ -1006,87 +523,81 @@ function MainContent() {
 
   if (!currentOrg) {
     return (
-      <>
-        <div className="min-h-screen flex items-center justify-center bg-zinc-50 p-4">
-          <div className="max-w-md w-full bg-white p-8 rounded-2xl shadow-sm border border-zinc-200 text-center space-y-6">
-            <div className="w-16 h-16 bg-orange-100 rounded-full flex items-center justify-center mx-auto">
-              <Package className="text-orange-500 w-8 h-8" />
+      <div className="min-h-screen flex items-center justify-center bg-zinc-50 p-4">
+        <div className="max-w-md w-full bg-white p-8 rounded-2xl shadow-sm border border-zinc-200 text-center space-y-6">
+          <div className="w-16 h-16 bg-orange-100 rounded-full flex items-center justify-center mx-auto">
+            <Package className="text-orange-500 w-8 h-8" />
+          </div>
+          <div>
+            <h2 className="text-2xl font-bold text-zinc-900">Welcome to Purit</h2>
+            <p className="text-sm text-zinc-500 mt-2">You haven't joined an organization yet. Create your workspace to get started.</p>
+          </div>
+          <div className="space-y-4">
+            <div className="text-left">
+              <label className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Organization Name</label>
+              <input
+                type="text"
+                value={orgName}
+                onChange={(e) => setOrgName(e.target.value)}
+                placeholder="e.g. Acme Distribution"
+                className="w-full mt-1 px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500 transition-all"
+              />
             </div>
-            <div>
-              <h2 className="text-2xl font-bold text-zinc-900">Welcome to Stockii</h2>
-              <p className="text-sm text-zinc-500 mt-2">You haven't joined an organization yet. Create your workspace to get started.</p>
-            </div>
-            <div className="space-y-4">
-              <div className="text-left">
-                <label className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Organization Name</label>
-                <input
-                  type="text"
-                  value={orgName}
-                  onChange={(e) => setOrgName(e.target.value)}
-                  placeholder="e.g. Acme Distribution"
-                  className="w-full mt-1 px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500 transition-all"
-                />
-              </div>
-              <button
-                className="w-full py-3 bg-orange-500 text-white rounded-xl font-bold shadow-lg shadow-orange-100 hover:bg-orange-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                disabled={!orgName.trim() || isCreating}
-                onClick={async () => {
-                  setIsCreating(true);
-                  try {
-                    await createOrganization(orgName);
-                  } catch (error: any) {
-                    console.error(error);
-                    notifyError(error?.message || 'Failed to create organization.');
-                  } finally {
-                    setIsCreating(false);
-                  }
-                }}
-              >
-                {isCreating ? 'Creating...' : 'Create Organization'}
-              </button>
-            </div>
-            <div className="pt-4 border-t border-zinc-100">
-              <button onClick={() => window.location.reload()} className="text-xs text-zinc-400 hover:text-zinc-600">Refresh Account</button>
-            </div>
+            <button
+              className="w-full py-3 bg-orange-500 text-white rounded-xl font-bold shadow-lg shadow-orange-100 hover:bg-orange-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={!orgName.trim() || isCreating}
+              onClick={async () => {
+                setIsCreating(true);
+                try {
+                  await createOrganization(orgName);
+                } catch (error: any) {
+                  console.error(error);
+                  notifyError(error?.message || 'Failed to create organization.');
+                } finally {
+                  setIsCreating(false);
+                }
+              }}
+            >
+              {isCreating ? 'Creating...' : 'Create Organization'}
+            </button>
+          </div>
+          <div className="pt-4 border-t border-zinc-100">
+            <button onClick={() => window.location.reload()} className="text-xs text-zinc-400 hover:text-zinc-600">Refresh Account</button>
           </div>
         </div>
-        <PasswordRecoveryPrompt />
-      </>
+      </div>
     );
   }
 
   return (
-    <>
-      <AppShell>
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/items" element={isAllowed('inventory') ? <ItemsPage /> : <Navigate to="/" replace />} />
-          <Route path="/purchases" element={isAllowed('purchases') ? <PurchasesPage /> : <Navigate to="/" replace />} />
-          <Route path="/purchases/new" element={isAllowed('purchases') ? <CreatePurchasePage /> : <Navigate to="/" replace />} />
-          <Route path="/sales" element={isAllowed('sales') ? <SalesPage /> : <Navigate to="/" replace />} />
-          <Route path="/sales/target" element={isAllowed('sales') ? <SalesTargetPage /> : <Navigate to="/" replace />} />
-          <Route path="/sales/new" element={isAllowed('sales') ? <CreateSalePage /> : <Navigate to="/" replace />} />
-          <Route path="/sales/:id/invoice" element={<InvoicePage />} />
-          <Route path="/customers" element={<CustomersPage />} />
-          <Route path="/customers/:id" element={<CustomerDetailsPage />} />
-          <Route path="/suppliers" element={isAllowed('purchases') ? <SuppliersPage /> : <Navigate to="/" replace />} />
-          <Route path="/suppliers/:id" element={isAllowed('purchases') ? <SupplierDetailsPage /> : <Navigate to="/" replace />} />
-          <Route path="/expenses" element={isAllowed('expenseTracker') ? <ExpenseTrackerPage /> : <Navigate to="/" replace />} />
-          <Route path="/trucks" element={isAllowed('truckInventory') ? <TrucksPage /> : <Navigate to="/" replace />} />
-          <Route path="/trucks/:id/stock" element={isAllowed('truckInventory') ? <TruckStockPage /> : <Navigate to="/" replace />} />
-          <Route path="/returns" element={isAllowed('returns') ? <ReturnsPage /> : <Navigate to="/" replace />} />
-          <Route path="/damages" element={isAllowed('damages') ? <DamagesPage /> : <Navigate to="/" replace />} />
-          <Route path="/transactions" element={<TransactionsPage />} />
-          <Route path="/sales-report" element={<SalesReportPage />} />
-          <Route path="/product-insights" element={<ProductInsightsPage />} />
-          <Route path="/reports" element={isAllowed('advancedReports') ? <ReportsPage /> : <Navigate to="/" replace />} />
-          <Route path="/settings" element={<SettingsPage />} />
-          <Route path="/print/barcode" element={<BarcodePrintPage />} />
-          <Route path="*" element={<Dashboard />} />
-        </Routes>
-      </AppShell>
-      <PasswordRecoveryPrompt />
-    </>
+    <AppShell>
+      <Routes>
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/items" element={isAllowed('inventory') ? <ItemsPage /> : <Navigate to="/" replace />} />
+        <Route path="/purchases" element={isAllowed('purchases') ? <PurchasesPage /> : <Navigate to="/" replace />} />
+        <Route path="/purchases/new" element={isAllowed('purchases') ? <CreatePurchasePage /> : <Navigate to="/" replace />} />
+        <Route path="/sales" element={isAllowed('sales') ? <SalesPage /> : <Navigate to="/" replace />} />
+        <Route path="/sales/target" element={isAllowed('sales') ? <SalesTargetPage /> : <Navigate to="/" replace />} />
+        <Route path="/sales/new" element={isAllowed('sales') ? <CreateSalePage /> : <Navigate to="/" replace />} />
+        <Route path="/sales/:id/invoice" element={<InvoicePage />} />
+        <Route path="/customers" element={<CustomersPage />} />
+        <Route path="/customers/:id" element={<CustomerDetailsPage />} />
+        <Route path="/suppliers" element={isAllowed('purchases') ? <SuppliersPage /> : <Navigate to="/" replace />} />
+        <Route path="/suppliers/:id" element={isAllowed('purchases') ? <SupplierDetailsPage /> : <Navigate to="/" replace />} />
+        <Route path="/expenses" element={isAllowed('expenseTracker') ? <ExpenseTrackerPage /> : <Navigate to="/" replace />} />
+        <Route path="/trucks" element={isAllowed('truckInventory') ? <TrucksPage /> : <Navigate to="/" replace />} />
+        <Route path="/trucks/:id/stock" element={isAllowed('truckInventory') ? <TruckStockPage /> : <Navigate to="/" replace />} />
+        <Route path="/returns" element={isAllowed('returns') ? <ReturnsPage /> : <Navigate to="/" replace />} />
+        <Route path="/damages" element={isAllowed('damages') ? <DamagesPage /> : <Navigate to="/" replace />} />
+        <Route path="/transactions" element={<TransactionsPage />} />
+        <Route path="/sales-report" element={<SalesReportPage />} />
+        <Route path="/product-insights" element={<ProductInsightsPage />} />
+        <Route path="/reports" element={isAllowed('advancedReports') ? <ReportsPage /> : <Navigate to="/" replace />} />
+        <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/print/barcode" element={<BarcodePrintPage />} />
+        <Route path="*" element={<Dashboard />} />
+      </Routes>
+    </AppShell>
   );
 }
 

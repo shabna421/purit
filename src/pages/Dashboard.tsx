@@ -735,7 +735,7 @@ export const Dashboard: React.FC = () => {
             <Sparkles className="h-8 w-8 animate-pulse text-orange-500" />
           </div>
           <div className="space-y-2">
-            <h3 className="text-xl font-extrabold text-zinc-900 tracking-tight">Welcome to Stockii</h3>
+            <h3 className="text-xl font-extrabold text-zinc-900 tracking-tight">Welcome to Purit</h3>
             <p className="text-sm text-zinc-500 max-w-sm leading-relaxed">
               Your account is registered successfully, but you do not currently have access to any modules.
             </p>

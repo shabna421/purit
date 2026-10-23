@@ -1,22 +1,13 @@
-import { 
-  collection, 
-  doc, 
-  runTransaction, 
-  increment, 
-  setDoc,
-  query,
-  where,
-  getDocs,
-  orderBy
-} from 'firebase/firestore';
-import { db } from '../firebase';
-import { InventoryTransaction, TransactionType, Item, StockSummary, InventoryLocation, ItemCategory } from '../types';
-
-function stripUndefined<T extends Record<string, any>>(value: T): T {
-  return Object.fromEntries(
-    Object.entries(value).filter(([, entry]) => entry !== undefined)
-  ) as T;
-}
+import { supabase } from '../supabaseClient';
+import {
+  InventoryTransaction,
+  TransactionType,
+  Item,
+  StockSummary,
+  InventoryLocation,
+  ItemCategory,
+} from '../types';
+import { generateId, stripUndefined } from './dbUtils';
 
 function buildBarcodeValue(itemId: string) {
   const prefix = itemId.replace(/[^a-zA-Z0-9]/g, '').slice(-4).toUpperCase() || 'ITEM';
@@ -27,7 +18,7 @@ function buildBarcodeValue(itemId: string) {
 export const inventoryService = {
   /**
    * Core Transaction Engine
-   * Handles all stock movements and ensures item currentStock is updated atomically.
+   * Handles all stock movements and ensures item currentStock and location-wise stock are updated.
    */
   async createTransaction(
     orgId: string,
@@ -43,7 +34,7 @@ export const inventoryService = {
       referenceId?: string;
       notes?: string;
     }
-  ) {
+  ): Promise<InventoryTransaction> {
     if (!params.itemId) {
       throw new Error('Item is required');
     }
@@ -51,227 +42,319 @@ export const inventoryService = {
       throw new Error('Quantity must be greater than zero');
     }
 
-    const itemRef = doc(db, 'organizations', orgId, 'items', params.itemId);
-    const transactionsRef = collection(db, 'organizations', orgId, 'transactions');
+    // 1. Fetch item
+    const { data: itemData, error: itemError } = await supabase
+      .from('items')
+      .select('*')
+      .eq('id', params.itemId)
+      .eq('orgId', orgId)
+      .maybeSingle();
 
-    return runTransaction(db, async (transaction) => {
-      const itemSnap = await transaction.get(itemRef);
-      if (!itemSnap.exists()) {
-        throw new Error('Item not found');
-      }
+    if (itemError || !itemData) {
+      throw new Error('Item not found');
+    }
 
-      const itemData = itemSnap.data() as Item;
-      let stockChange = 0;
-      let sourceDelta = 0;
-      let destinationDelta = 0;
+    let stockChange = 0;
+    let sourceDelta = 0;
+    let destinationDelta = 0;
 
-      // Logic for stock change based on transaction type
-      switch (params.type) {
-        case 'PURCHASE_IN':
-        case 'ADJUSTMENT_IN':
-        case 'CUSTOMER_RETURN':
-          stockChange = params.quantity;
-          destinationDelta = params.quantity;
-          break;
-        case 'SALE_OUT':
-        case 'ADJUSTMENT_OUT':
-        case 'DAMAGE_OUT':
-          stockChange = -params.quantity;
-          sourceDelta = -params.quantity;
-          break;
-        case 'TRANSFER':
-          // Transfers don't change total stock, but we might track location-wise stock later
-          stockChange = 0;
-          sourceDelta = -params.quantity;
-          destinationDelta = params.quantity;
-          break;
-        case 'TRUCK_ASSIGNMENT':
-          stockChange = 0;
-          sourceDelta = -params.quantity;
-          destinationDelta = params.quantity;
-          break;
-        case 'TRUCK_RETURN':
-          stockChange = 0;
-          sourceDelta = -params.quantity;
-          destinationDelta = params.quantity;
-          break;
-      }
+    switch (params.type) {
+      case 'PURCHASE_IN':
+      case 'ADJUSTMENT_IN':
+      case 'CUSTOMER_RETURN':
+        stockChange = params.quantity;
+        destinationDelta = params.quantity;
+        break;
+      case 'SALE_OUT':
+      case 'ADJUSTMENT_OUT':
+      case 'DAMAGE_OUT':
+        stockChange = -params.quantity;
+        sourceDelta = -params.quantity;
+        break;
+      case 'TRANSFER':
+      case 'TRUCK_ASSIGNMENT':
+      case 'TRUCK_RETURN':
+        stockChange = 0;
+        sourceDelta = -params.quantity;
+        destinationDelta = params.quantity;
+        break;
+    }
 
-      if (sourceDelta !== 0 && !params.sourceLocationId) {
-        throw new Error('A source location is required for this stock movement');
-      }
-      if (destinationDelta !== 0 && !params.destinationLocationId) {
-        throw new Error('A destination location is required for this stock movement');
-      }
-      if (
-        params.sourceLocationId &&
-        params.destinationLocationId &&
-        params.sourceLocationId === params.destinationLocationId &&
-        sourceDelta !== 0 &&
-        destinationDelta !== 0
-      ) {
-        throw new Error('Source and destination locations must be different');
-      }
+    if (sourceDelta !== 0 && !params.sourceLocationId) {
+      throw new Error('A source location is required for this stock movement');
+    }
+    if (destinationDelta !== 0 && !params.destinationLocationId) {
+      throw new Error('A destination location is required for this stock movement');
+    }
+    if (
+      params.sourceLocationId &&
+      params.destinationLocationId &&
+      params.sourceLocationId === params.destinationLocationId &&
+      sourceDelta !== 0 &&
+      destinationDelta !== 0
+    ) {
+      throw new Error('Source and destination locations must be different');
+    }
 
-      // Guard against negative total stock (unless adjustment)
-      if (params.type !== 'ADJUSTMENT_IN' && params.type !== 'ADJUSTMENT_OUT') {
-        if (itemData.currentStock + stockChange < 0) {
-          throw new Error('Insufficient stock for this operation');
-        }
+    // Guard against negative total stock (unless adjustment)
+    if (params.type !== 'ADJUSTMENT_IN' && params.type !== 'ADJUSTMENT_OUT') {
+      if ((itemData.currentStock || 0) + stockChange < 0) {
+        throw new Error('Insufficient stock for this operation');
       }
+    }
 
-      if (sourceDelta < 0 && params.sourceLocationId) {
-        const sourceSummaryRef = doc(db, 'organizations', orgId, 'stockSummaries', `${params.itemId}_${params.sourceLocationId}`);
-        const sourceSummarySnap = await transaction.get(sourceSummaryRef);
-        const sourceStock = sourceSummarySnap.exists() ? (sourceSummarySnap.data().quantity || 0) : 0;
-        if (sourceStock < params.quantity) {
-          throw new Error(`Insufficient stock at the selected source location. Available: ${sourceStock}`);
-        }
+    // Check location stock if taking from a source location
+    if (sourceDelta < 0 && params.sourceLocationId) {
+      const sourceSummaryId = `${params.itemId}_${params.sourceLocationId}`;
+      const { data: sourceSummary } = await supabase
+        .from('stock_summaries')
+        .select('*')
+        .eq('id', sourceSummaryId)
+        .maybeSingle();
+
+      const sourceStock = sourceSummary?.quantity || 0;
+      if (sourceStock < params.quantity) {
+        throw new Error(`Insufficient stock at the selected source location. Available: ${sourceStock}`);
       }
+    }
 
-      // Create transaction record
-      const newTransactionRef = doc(transactionsRef);
-      const transactionData = stripUndefined({
-        id: newTransactionRef.id,
+    // Create transaction record
+    const newTransactionId = generateId();
+    const transactionData: InventoryTransaction = stripUndefined({
+      id: newTransactionId,
+      orgId,
+      itemId: params.itemId,
+      type: params.type,
+      sourceLocationId: params.sourceLocationId,
+      destinationLocationId: params.destinationLocationId,
+      quantity: params.quantity,
+      unitCost: params.unitCost,
+      unitSellPrice: params.unitSellPrice,
+      referenceId: params.referenceId,
+      userId,
+      timestamp: Date.now(),
+      notes: params.notes,
+      status: 'completed',
+    });
+
+    const { error: transInsertError } = await supabase
+      .from('transactions')
+      .insert(transactionData);
+
+    if (transInsertError) {
+      console.error('Error inserting inventory transaction:', transInsertError);
+      throw new Error(transInsertError.message);
+    }
+
+    // Update item stock
+    if (stockChange !== 0) {
+      const nextStock = (itemData.currentStock || 0) + stockChange;
+      const { error: updateItemError } = await supabase
+        .from('items')
+        .update({ currentStock: nextStock })
+        .eq('id', params.itemId)
+        .eq('orgId', orgId);
+
+      if (updateItemError) {
+        console.error('Error updating item stock:', updateItemError);
+        throw new Error(updateItemError.message);
+      }
+    }
+
+    // Update location-wise stock summaries
+    if (params.sourceLocationId && sourceDelta !== 0) {
+      const sourceSummaryId = `${params.itemId}_${params.sourceLocationId}`;
+      const { data: sourceSummary } = await supabase
+        .from('stock_summaries')
+        .select('*')
+        .eq('id', sourceSummaryId)
+        .maybeSingle();
+
+      const nextQuantity = (sourceSummary?.quantity || 0) + sourceDelta;
+      await supabase.from('stock_summaries').upsert({
+        id: sourceSummaryId,
         orgId,
         itemId: params.itemId,
-        type: params.type,
-        sourceLocationId: params.sourceLocationId,
-        destinationLocationId: params.destinationLocationId,
-        quantity: params.quantity,
-        unitCost: params.unitCost,
-        unitSellPrice: params.unitSellPrice,
-        referenceId: params.referenceId,
-        userId,
-        timestamp: Date.now(),
-        notes: params.notes,
-        status: 'completed'
-      }) as InventoryTransaction;
-
-      transaction.set(newTransactionRef, transactionData);
-
-      // Update item stock
-      if (stockChange !== 0) {
-        transaction.update(itemRef, {
-          currentStock: increment(stockChange)
-        });
-      }
-
-      // Update location-wise stock summaries
-      if (params.sourceLocationId && sourceDelta !== 0) {
-        const sourceSummaryRef = doc(db, 'organizations', orgId, 'stockSummaries', `${params.itemId}_${params.sourceLocationId}`);
-        transaction.set(sourceSummaryRef, {
-          itemId: params.itemId,
-          locationId: params.sourceLocationId,
-          quantity: increment(sourceDelta)
-        }, { merge: true });
-      }
-
-      if (params.destinationLocationId && destinationDelta !== 0) {
-        const destSummaryRef = doc(db, 'organizations', orgId, 'stockSummaries', `${params.itemId}_${params.destinationLocationId}`);
-        transaction.set(destSummaryRef, {
-          itemId: params.itemId,
-          locationId: params.destinationLocationId,
-          quantity: increment(destinationDelta)
-        }, { merge: true });
-      }
-
-      return transactionData;
-    });
-  },
-
-  async getStockByLocation(orgId: string, locationId: string) {
-    const q = query(
-      collection(db, 'organizations', orgId, 'stockSummaries'),
-      where('locationId', '==', locationId)
-    );
-    const snap = await getDocs(q);
-    return snap.docs.map(d => d.data() as StockSummary);
-  },
-
-  async getStockSummary(orgId: string, itemId: string, locationId: string) {
-    const q = query(
-      collection(db, 'organizations', orgId, 'stockSummaries'),
-      where('itemId', '==', itemId),
-      where('locationId', '==', locationId)
-    );
-    const snap = await getDocs(q);
-    return snap.docs[0]?.data() as StockSummary | undefined;
-  },
-
-  async getTransactions(orgId: string, limitCount = 50) {
-    const q = query(
-      collection(db, 'organizations', orgId, 'transactions'),
-      orderBy('timestamp', 'desc')
-    );
-    const snap = await getDocs(q);
-    return snap.docs.map(d => d.data() as InventoryTransaction);
-  },
-
-  async getItems(orgId: string, options?: { includeDeleted?: boolean }) {
-    const q = query(collection(db, 'organizations', orgId, 'items'), orderBy('name'));
-    const snap = await getDocs(q);
-    const items = snap.docs.map(d => d.data() as Item);
-    if (options?.includeDeleted) {
-      return items;
+        locationId: params.sourceLocationId,
+        quantity: nextQuantity,
+      });
     }
-    return items.filter((item) => !item.isDeleted);
+
+    if (params.destinationLocationId && destinationDelta !== 0) {
+      const destSummaryId = `${params.itemId}_${params.destinationLocationId}`;
+      const { data: destSummary } = await supabase
+        .from('stock_summaries')
+        .select('*')
+        .eq('id', destSummaryId)
+        .maybeSingle();
+
+      const nextQuantity = (destSummary?.quantity || 0) + destinationDelta;
+      await supabase.from('stock_summaries').upsert({
+        id: destSummaryId,
+        orgId,
+        itemId: params.itemId,
+        locationId: params.destinationLocationId,
+        quantity: nextQuantity,
+      });
+    }
+
+    return transactionData;
   },
 
-  async getLocations(orgId: string) {
-    const q = query(collection(db, 'organizations', orgId, 'locations'), orderBy('name'));
-    const snap = await getDocs(q);
-    return snap.docs.map(d => d.data() as InventoryLocation);
+  async getStockByLocation(orgId: string, locationId: string): Promise<StockSummary[]> {
+    const { data, error } = await supabase
+      .from('stock_summaries')
+      .select('*')
+      .eq('orgId', orgId)
+      .eq('locationId', locationId);
+
+    if (error) {
+      console.error('Error fetching stock by location:', error);
+      throw new Error(error.message);
+    }
+    return (data || []) as StockSummary[];
   },
 
-  async getCategories(orgId: string) {
-    const q = query(collection(db, 'organizations', orgId, 'categories'), orderBy('name'));
-    const snap = await getDocs(q);
-    return snap.docs.map(d => d.data() as ItemCategory);
+  async getStockSummary(orgId: string, itemId: string, locationId: string): Promise<StockSummary | undefined> {
+    const { data, error } = await supabase
+      .from('stock_summaries')
+      .select('*')
+      .eq('orgId', orgId)
+      .eq('itemId', itemId)
+      .eq('locationId', locationId)
+      .maybeSingle();
+
+    if (error) {
+      console.error('Error fetching stock summary:', error);
+      throw new Error(error.message);
+    }
+    return (data || undefined) as StockSummary | undefined;
   },
 
-  async createItem(orgId: string, item: Partial<Item>, options?: { autoGenerateBarcode?: boolean }) {
-    const itemsRef = collection(db, 'organizations', orgId, 'items');
-    const newDoc = doc(itemsRef);
+  async getTransactions(orgId: string, limitCount = 50): Promise<InventoryTransaction[]> {
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('orgId', orgId)
+      .order('timestamp', { ascending: false })
+      .limit(limitCount);
+
+    if (error) {
+      console.error('Error fetching transactions:', error);
+      throw new Error(error.message);
+    }
+    return (data || []) as InventoryTransaction[];
+  },
+
+  async getItems(orgId: string, options?: { includeDeleted?: boolean }): Promise<Item[]> {
+    let q = supabase
+      .from('items')
+      .select('*')
+      .eq('orgId', orgId)
+      .order('name');
+
+    if (!options?.includeDeleted) {
+      q = q.eq('isDeleted', false);
+    }
+
+    const { data, error } = await q;
+
+    if (error) {
+      console.error('Error fetching items:', error);
+      throw new Error(error.message);
+    }
+    return (data || []) as Item[];
+  },
+
+  async getLocations(orgId: string): Promise<InventoryLocation[]> {
+    const { data, error } = await supabase
+      .from('locations')
+      .select('*')
+      .eq('orgId', orgId)
+      .order('name');
+
+    if (error) {
+      console.error('Error fetching locations:', error);
+      throw new Error(error.message);
+    }
+    return (data || []) as InventoryLocation[];
+  },
+
+  async getCategories(orgId: string): Promise<ItemCategory[]> {
+    const { data, error } = await supabase
+      .from('categories')
+      .select('*')
+      .eq('orgId', orgId)
+      .order('name');
+
+    if (error) {
+      console.error('Error fetching categories:', error);
+      throw new Error(error.message);
+    }
+    return (data || []) as ItemCategory[];
+  },
+
+  async createItem(
+    orgId: string,
+    item: Partial<Item>,
+    options?: { autoGenerateBarcode?: boolean }
+  ): Promise<Item> {
+    const newId = generateId();
     let barcode = item.barcode;
     if (!barcode && options?.autoGenerateBarcode) {
-      barcode = buildBarcodeValue(newDoc.id);
+      barcode = buildBarcodeValue(newId);
     }
+
+    if (barcode) {
+      let attempts = 0;
+      let { data: existingBarcode } = await supabase
+        .from('barcode_registry')
+        .select('*')
+        .eq('barcode', barcode)
+        .maybeSingle();
+
+      while (existingBarcode && options?.autoGenerateBarcode && attempts < 5) {
+        barcode = buildBarcodeValue(newId);
+        const res = await supabase
+          .from('barcode_registry')
+          .select('*')
+          .eq('barcode', barcode)
+          .maybeSingle();
+        existingBarcode = res.data;
+        attempts += 1;
+      }
+
+      if (existingBarcode) {
+        throw new Error('Barcode already exists. Please try again.');
+      }
+
+      await supabase.from('barcode_registry').insert({
+        barcode,
+        orgId,
+        itemId: newId,
+        createdAt: Date.now(),
+      });
+    }
+
     const newItem = stripUndefined({
       ...item,
-      id: newDoc.id,
+      id: newId,
       orgId,
       barcode,
       currentStock: item.currentStock || 0,
       createdAt: Date.now(),
-      isActive: true
+      isActive: true,
+      isDeleted: false,
     }) as Item;
 
-    await runTransaction(db, async (transaction) => {
-      if (barcode) {
-        let attempts = 0;
-        let barcodeRef = doc(db, 'organizations', orgId, 'barcodeRegistry', barcode);
-        let existingBarcode = await transaction.get(barcodeRef);
-        while (existingBarcode.exists() && options?.autoGenerateBarcode && attempts < 5) {
-          barcode = buildBarcodeValue(newDoc.id);
-          barcodeRef = doc(db, 'organizations', orgId, 'barcodeRegistry', barcode);
-          existingBarcode = await transaction.get(barcodeRef);
-          attempts += 1;
-        }
+    const { error: insertError } = await supabase
+      .from('items')
+      .insert(newItem);
 
-        if (existingBarcode.exists()) {
-          throw new Error('Barcode already exists. Please try again.');
-        }
-
-        transaction.set(barcodeRef, {
-          barcode,
-          itemId: newDoc.id,
-          createdAt: Date.now(),
-        });
-      }
-
-      transaction.set(newDoc, stripUndefined({ ...newItem, barcode }));
-    });
+    if (insertError) {
+      console.error('Error creating item:', insertError);
+      throw new Error(insertError.message);
+    }
 
     return {
       ...newItem,
@@ -279,62 +362,93 @@ export const inventoryService = {
     };
   },
 
-  async updateItem(orgId: string, itemId: string, item: Partial<Item>) {
-    const itemRef = doc(db, 'organizations', orgId, 'items', itemId);
+  async updateItem(orgId: string, itemId: string, item: Partial<Item>): Promise<void> {
     const updates = stripUndefined(item);
 
-    await runTransaction(db, async (transaction) => {
-      const itemSnap = await transaction.get(itemRef);
-      if (!itemSnap.exists()) {
-        throw new Error('Item not found');
+    // Fetch existing item
+    const { data: existingItem, error: fetchError } = await supabase
+      .from('items')
+      .select('*')
+      .eq('id', itemId)
+      .eq('orgId', orgId)
+      .maybeSingle();
+
+    if (fetchError || !existingItem) {
+      throw new Error('Item not found');
+    }
+
+    const nextBarcode = updates.barcode;
+    if (nextBarcode && nextBarcode !== existingItem.barcode) {
+      const { data: nextBarcodeRecord } = await supabase
+        .from('barcode_registry')
+        .select('*')
+        .eq('barcode', nextBarcode)
+        .maybeSingle();
+
+      if (nextBarcodeRecord && nextBarcodeRecord.itemId !== itemId) {
+        throw new Error('Barcode already exists. Please try again.');
       }
 
-      const existingItem = itemSnap.data() as Item;
-      const nextBarcode = updates.barcode;
-
-      if (nextBarcode && nextBarcode !== existingItem.barcode) {
-        const nextBarcodeRef = doc(db, 'organizations', orgId, 'barcodeRegistry', nextBarcode);
-        const nextBarcodeSnap = await transaction.get(nextBarcodeRef);
-        if (nextBarcodeSnap.exists() && nextBarcodeSnap.data().itemId !== itemId) {
-          throw new Error('Barcode already exists. Please try again.');
-        }
-
-        if (existingItem.barcode) {
-          const prevBarcodeRef = doc(db, 'organizations', orgId, 'barcodeRegistry', existingItem.barcode);
-          transaction.delete(prevBarcodeRef);
-        }
-
-        transaction.set(nextBarcodeRef, {
-          barcode: nextBarcode,
-          itemId,
-          createdAt: Date.now(),
-        });
+      if (existingItem.barcode) {
+        await supabase
+          .from('barcode_registry')
+          .delete()
+          .eq('barcode', existingItem.barcode);
       }
 
-      transaction.set(itemRef, updates, { merge: true });
-    });
+      await supabase.from('barcode_registry').upsert({
+        barcode: nextBarcode,
+        orgId,
+        itemId,
+        createdAt: Date.now(),
+      });
+    }
+
+    const { error: updateError } = await supabase
+      .from('items')
+      .update(updates)
+      .eq('id', itemId)
+      .eq('orgId', orgId);
+
+    if (updateError) {
+      console.error('Error updating item:', updateError);
+      throw new Error(updateError.message);
+    }
   },
 
-  async deleteItem(orgId: string, itemId: string) {
-    const itemRef = doc(db, 'organizations', orgId, 'items', itemId);
-    await runTransaction(db, async (transaction) => {
-      const itemSnap = await transaction.get(itemRef);
-      if (!itemSnap.exists()) {
-        throw new Error('Item not found');
-      }
+  async deleteItem(orgId: string, itemId: string): Promise<void> {
+    const { data: item, error: fetchError } = await supabase
+      .from('items')
+      .select('*')
+      .eq('id', itemId)
+      .eq('orgId', orgId)
+      .maybeSingle();
 
-      const item = itemSnap.data() as Item;
-      transaction.set(itemRef, {
+    if (fetchError || !item) {
+      throw new Error('Item not found');
+    }
+
+    const { error: updateError } = await supabase
+      .from('items')
+      .update({
         isDeleted: true,
         isActive: false,
         deletedAt: Date.now(),
-      }, { merge: true });
+      })
+      .eq('id', itemId)
+      .eq('orgId', orgId);
 
-      if (item.barcode) {
-        const barcodeRef = doc(db, 'organizations', orgId, 'barcodeRegistry', item.barcode);
-        transaction.delete(barcodeRef);
-      }
-    });
+    if (updateError) {
+      console.error('Error soft-deleting item:', updateError);
+      throw new Error(updateError.message);
+    }
+
+    if (item.barcode) {
+      await supabase
+        .from('barcode_registry')
+        .delete()
+        .eq('barcode', item.barcode);
+    }
   },
 
   async adjustItemStock(
@@ -347,27 +461,34 @@ export const inventoryService = {
       mode: 'add' | 'remove';
       notes?: string;
     }
-  ) {
+  ): Promise<InventoryTransaction> {
     return this.createTransaction(orgId, userId, {
       itemId: params.itemId,
       type: params.mode === 'add' ? 'ADJUSTMENT_IN' : 'ADJUSTMENT_OUT',
       quantity: params.quantity,
       sourceLocationId: params.mode === 'remove' ? params.locationId : undefined,
       destinationLocationId: params.mode === 'add' ? params.locationId : undefined,
-      notes: params.notes
+      notes: params.notes,
     });
   },
 
-  async createCategory(orgId: string, name: string, description?: string) {
-    const catsRef = collection(db, 'organizations', orgId, 'categories');
-    const newDoc = doc(catsRef);
+  async createCategory(orgId: string, name: string, description?: string): Promise<ItemCategory> {
+    const id = generateId();
     const newCat = stripUndefined({
-      id: newDoc.id,
+      id,
       orgId,
       name,
       description,
-    });
-    await setDoc(newDoc, newCat);
+    }) as ItemCategory;
+
+    const { error } = await supabase
+      .from('categories')
+      .insert(newCat);
+
+    if (error) {
+      console.error('Error creating category:', error);
+      throw new Error(error.message);
+    }
     return newCat;
   },
 
@@ -378,22 +499,41 @@ export const inventoryService = {
       type: InventoryLocation['type'];
       isDefault?: boolean;
     }
-  ) {
-    const locationsRef = collection(db, 'organizations', orgId, 'locations');
-    const newDoc = doc(locationsRef);
+  ): Promise<InventoryLocation> {
+    const id = generateId();
     const newLocation = stripUndefined({
-      id: newDoc.id,
+      id,
       orgId,
       name: location.name,
       type: location.type,
       isDefault: location.isDefault ?? false,
-    });
-    await setDoc(newDoc, newLocation);
-    return newLocation as InventoryLocation;
+    }) as InventoryLocation;
+
+    const { error } = await supabase
+      .from('locations')
+      .insert(newLocation);
+
+    if (error) {
+      console.error('Error creating location:', error);
+      throw new Error(error.message);
+    }
+    return newLocation;
   },
 
-  async updateLocation(orgId: string, locationId: string, location: Partial<InventoryLocation>) {
-    const locationRef = doc(db, 'organizations', orgId, 'locations', locationId);
-    await setDoc(locationRef, stripUndefined(location), { merge: true });
-  }
+  async updateLocation(
+    orgId: string,
+    locationId: string,
+    location: Partial<InventoryLocation>
+  ): Promise<void> {
+    const { error } = await supabase
+      .from('locations')
+      .update(stripUndefined(location))
+      .eq('id', locationId)
+      .eq('orgId', orgId);
+
+    if (error) {
+      console.error('Error updating location:', error);
+      throw new Error(error.message);
+    }
+  },
 };

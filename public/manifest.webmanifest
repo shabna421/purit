@@ -1,15 +1,15 @@
 {
-  "name": "Stockii",
-  "short_name": "Stockii",
+  "name": "Purit",
+  "short_name": "Purit",
   "description": "Bulk inventory, sales, truck stock, returns, and damages management.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#fafafa",
-  "theme_color": "#f97316",
+  "theme_color": "#16a34a",
   "orientation": "portrait-primary",
   "icons": [
     {
-      "src": "/icons/stockii-icon.svg",
+      "src": "/icons/purit-icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any maskable"

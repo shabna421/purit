@@ -6,10 +6,8 @@ import { Shield, Layout, Save, Check, X, Search, Coins, Users, Lock, UserPlus, T
 import { useNotifications } from '../notifications';
 import { AppSelect } from '../components/AppSelect';
 import { formatNumericInput, parseNumericInput } from '../utils/numbers';
-import { auth, db, firebaseConfig } from '../firebase';
-import { initializeApp, getApps } from 'firebase/app';
-import { getAuth, createUserWithEmailAndPassword, signOut as secondarySignOut } from 'firebase/auth';
-import { collection, query, where, getDocs, doc, getDoc, setDoc, deleteDoc, updateDoc } from 'firebase/firestore';
+import { supabase } from '../supabaseClient';
+import { generateId } from '../services/dbUtils';
 import SuperDeleteConfirmModal from '../components/SuperDeleteConfirmModal';
 
 const CURRENCY_OPTIONS = [
@@ -41,7 +39,7 @@ interface MemberWithProfile extends Membership {
 
 export default function SettingsPage() {
   const { currentOrg, updateCurrentOrgSettings, membership } = useTenancy();
-  const { user: authUser, isGoogleOnlyUser, hasEmailProvider, setPasswordForCurrentUser } = useAuth();
+  const { user: authUser } = useAuth();
   const { success, error: notifyError } = useNotifications();
   const [settings, setSettings] = useState<OrganizationSettings | null>(null);
   const [saving, setSaving] = useState(false);
@@ -49,12 +47,7 @@ export default function SettingsPage() {
   const [searchTerm, setSearchTerm] = useState('');
   
   // Navigation Tabs
-  const [activeTab, setActiveTab] = useState<'general' | 'modules' | 'staff' | 'security'>('general');
-
-  // Password / Security State
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmNewPassword, setConfirmNewPassword] = useState('');
-  const [updatingPassword, setUpdatingPassword] = useState(false);
+  const [activeTab, setActiveTab] = useState<'general' | 'modules' | 'staff'>('general');
 
   // Staff State
   const [members, setMembers] = useState<MemberWithProfile[]>([]);
@@ -62,7 +55,6 @@ export default function SettingsPage() {
   const [loadingMembers, setLoadingMembers] = useState(false);
   const [inviteName, setInviteName] = useState('');
   const [inviteEmail, setInviteEmail] = useState('');
-  const [invitePassword, setInvitePassword] = useState('');
   const [inviting, setInviting] = useState(false);
 
   // States for unified delete confirmations
@@ -156,8 +148,13 @@ export default function SettingsPage() {
 
   const handleUpdateModules = async (membershipId: string, allowedModules: Record<string, boolean>) => {
     try {
-      const docRef = doc(db, 'memberships', membershipId);
-      await updateDoc(docRef, { allowedModules });
+      const { error } = await supabase
+        .from('memberships')
+        .update({ allowedModules })
+        .eq('id', membershipId);
+
+      if (error) throw error;
+
       success('Staff permissions updated successfully!');
       fetchMembers();
       setEditingMemberId(null);
@@ -181,7 +178,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (currentOrg && !isOwner) {
-      setActiveTab('security');
+      setActiveTab('staff');
     }
   }, [currentOrg, isOwner]);
 
@@ -190,9 +187,13 @@ export default function SettingsPage() {
     if (!currentOrg) return;
     setLoadingMembers(true);
     try {
-      const q = query(collection(db, 'memberships'), where('orgId', '==', currentOrg.id));
-      const snap = await getDocs(q);
-      const membershipList = snap.docs.map(d => d.data() as Membership);
+      const { data: membershipData, error: memErr } = await supabase
+        .from('memberships')
+        .select('*')
+        .eq('orgId', currentOrg.id);
+
+      if (memErr) throw memErr;
+      const membershipList = (membershipData || []) as Membership[];
 
       const membersWithProfiles = await Promise.all(
         membershipList.map(async (m) => {
@@ -212,10 +213,14 @@ export default function SettingsPage() {
               };
             }
 
-            // 2. Otherwise query Firestore users collection
-            const userSnap = await getDoc(doc(db, 'users', m.userId));
-            const profile = userSnap.exists() ? userSnap.data() as User : null;
-            
+            // 2. Otherwise query Supabase users collection
+            const { data: userData } = await supabase
+              .from('users')
+              .select('*')
+              .eq('uid', m.userId)
+              .maybeSingle();
+
+            const profile = userData as User | null;
             const email = profile?.email || 'No Email';
             let displayName = profile?.displayName || '';
             if (!displayName || displayName === 'User' || displayName === 'Unknown Staff') {
@@ -241,13 +246,16 @@ export default function SettingsPage() {
       setMembers(membersWithProfiles);
 
       // Fetch pending invitations
-      const invQ = query(collection(db, 'invitations'), where('orgId', '==', currentOrg.id));
-      const invSnap = await getDocs(invQ);
-      const invList = invSnap.docs.map(d => ({
+      const { data: invData } = await supabase
+        .from('invitations')
+        .select('*')
+        .eq('orgId', currentOrg.id);
+
+      const invList = (invData || []).map((d: any) => ({
         id: d.id,
-        email: d.data().email as string,
-        role: (d.data().role || 'sales') as Role,
-        invitedAt: d.data().invitedAt as number,
+        email: d.email as string,
+        role: (d.role || 'sales') as Role,
+        invitedAt: d.createdAt || Date.now(),
       }));
       setPendingInvites(invList);
     } catch (err) {
@@ -258,9 +266,14 @@ export default function SettingsPage() {
     }
   };
 
-  const handleCancelInvite = async (inviteId: string, email: string) => {
+  const handleCancelInvite = async (inviteId: string, _email?: string) => {
     try {
-      await deleteDoc(doc(db, 'invitations', inviteId));
+      const { error } = await supabase
+        .from('invitations')
+        .delete()
+        .eq('id', inviteId);
+
+      if (error) throw error;
       success('Invitation cancelled successfully');
       fetchMembers();
     } catch (err) {
@@ -323,44 +336,6 @@ export default function SettingsPage() {
     }
   };
 
-  // Password update handler
-  const handleUpdatePassword = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newPassword.trim()) {
-      notifyError('New password cannot be empty');
-      return;
-    }
-    if (newPassword.length < 6) {
-      notifyError('Password must be at least 6 characters');
-      return;
-    }
-    if (newPassword !== confirmNewPassword) {
-      notifyError('Passwords do not match');
-      return;
-    }
-
-    setUpdatingPassword(true);
-    try {
-      const outcome = await setPasswordForCurrentUser(newPassword);
-      if (outcome === 'linked') {
-        success('Password set successfully! You can now log in with both Google and email + password.');
-      } else {
-        success('Password updated successfully!');
-      }
-      setNewPassword('');
-      setConfirmNewPassword('');
-    } catch (error: any) {
-      console.error('Password update failed:', error);
-      if (error?.code === 'auth/requires-recent-login' || error?.message?.includes('sign out')) {
-        notifyError(error.message || 'Session expired. Please log out and log back in, then try again.');
-      } else {
-        notifyError(error?.message || 'Failed to update password. Please try again.');
-      }
-    } finally {
-      setUpdatingPassword(false);
-    }
-  };
-
   // Add Staff Member handler
   const handleAddMember = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -376,7 +351,6 @@ export default function SettingsPage() {
 
     const targetEmail = inviteEmail.trim().toLowerCase();
     const targetName = inviteName.trim();
-    const targetPassword = invitePassword.trim();
 
     // Check if already a member
     const alreadyMember = members.some(m => m.email.trim().toLowerCase() === targetEmail);
@@ -387,89 +361,41 @@ export default function SettingsPage() {
 
     setInviting(true);
     try {
-      const usersRef = collection(db, 'users');
-      const q = query(usersRef, where('email', '==', targetEmail));
-      const querySnapshot = await getDocs(q);
+      const { data: userRecords } = await supabase
+        .from('users')
+        .select('*')
+        .eq('email', targetEmail);
 
-      if (querySnapshot.empty) {
-        // This is a new user! We must create their credentials.
-        if (!targetPassword) {
-          notifyError('Please set a temporary password for the new employee (minimum 6 characters).');
-          setInviting(false);
-          return;
-        }
-        if (targetPassword.length < 6) {
-          notifyError('Temporary password must be at least 6 characters.');
-          setInviting(false);
-          return;
-        }
+      let targetUserId: string;
 
-        // Initialize secondary firebase app to register employee without signing out admin
-        const secondaryApp = getApps().find(app => app.name === 'secondary-app')
-          || initializeApp(firebaseConfig, 'secondary-app');
-        const secondaryAuth = getAuth(secondaryApp);
-
-        console.log('[Staff] Creating secondary Auth account for email:', targetEmail);
-        const credential = await createUserWithEmailAndPassword(secondaryAuth, targetEmail, targetPassword);
-        const newUid = credential.user.uid;
-
-        console.log('[Staff] Saving user profile in Firestore for newUid:', newUid);
-        // Save user profile to Firestore (with photoURL as null, avoiding undefined crashes!)
-        await setDoc(doc(db, 'users', newUid), {
-          uid: newUid,
+      if (!userRecords || userRecords.length === 0) {
+        targetUserId = generateId();
+        await supabase.from('users').insert({
+          uid: targetUserId,
           email: targetEmail,
           displayName: targetName,
           photoURL: null,
           createdAt: Date.now(),
         });
-
-        console.log('[Staff] Creating organization membership for org:', currentOrg.id);
-        const membershipId = `${newUid}_${currentOrg.id}`;
-        const memRef = doc(db, 'memberships', membershipId);
-        const newMembership: Membership = {
-          id: membershipId,
-          orgId: currentOrg.id,
-          userId: newUid,
-          role: 'employee',
-          joinedAt: Date.now(),
-          allowedModules: inviteAllowedModules,
-        };
-        await setDoc(memRef, newMembership);
-
-        // Sign out from secondary app to clean up its local state
-        await secondarySignOut(secondaryAuth);
-        
-        success(`Successfully registered ${targetName} and added them to the team!`);
-        setInviteName('');
-        setInviteEmail('');
-        setInvitePassword('');
-        setInviteAllowedModules({});
       } else {
-        // Case A: User already has a Stockii account! Add them directly via memberships.
-        const targetUserDoc = querySnapshot.docs[0];
-        const targetUserId = targetUserDoc.id;
-        const targetUserName = targetUserDoc.data().displayName || targetName || targetEmail;
-
-        const membershipId = `${targetUserId}_${currentOrg.id}`;
-        const memRef = doc(db, 'memberships', membershipId);
-
-        const newMembership: Membership = {
-          id: membershipId,
-          orgId: currentOrg.id,
-          userId: targetUserId,
-          role: 'employee',
-          joinedAt: Date.now(),
-          allowedModules: inviteAllowedModules,
-        };
-
-        await setDoc(memRef, newMembership);
-        success(`Employee already had an account, successfully added ${targetUserName} to your team!`);
-        setInviteName('');
-        setInviteEmail('');
-        setInvitePassword('');
-        setInviteAllowedModules({});
+        targetUserId = userRecords[0].uid;
       }
 
+      const membershipId = `${targetUserId}_${currentOrg.id}`;
+      const newMembership: Membership = {
+        id: membershipId,
+        orgId: currentOrg.id,
+        userId: targetUserId,
+        role: 'employee',
+        joinedAt: Date.now(),
+        allowedModules: inviteAllowedModules,
+      };
+
+      await supabase.from('memberships').upsert(newMembership);
+      success(`Successfully added ${targetName} to your team!`);
+      setInviteName('');
+      setInviteEmail('');
+      setInviteAllowedModules({});
       fetchMembers();
     } catch (err: any) {
       console.error('Error adding staff member:', err);
@@ -485,13 +411,18 @@ export default function SettingsPage() {
       notifyError('Cannot remove the organization owner!');
       return;
     }
-    if (memberUserId === auth.currentUser?.uid) {
+    if (memberUserId === authUser?.uid) {
       notifyError('Cannot remove yourself!');
       return;
     }
 
     try {
-      await deleteDoc(doc(db, 'memberships', membershipId));
+      const { error } = await supabase
+        .from('memberships')
+        .delete()
+        .eq('id', membershipId);
+
+      if (error) throw error;
       success('Staff member removed successfully');
       fetchMembers();
     } catch (err) {
@@ -550,13 +481,6 @@ export default function SettingsPage() {
         >
           <Users className="w-4 h-4" />
           Staff Management
-        </button>
-        <button
-          onClick={() => setActiveTab('security')}
-          className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold whitespace-nowrap transition-all ${activeTab === 'security' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-900'}`}
-        >
-          <Lock className="w-4 h-4" />
-          Account Security
         </button>
       </div>
 
@@ -867,21 +791,6 @@ export default function SettingsPage() {
                         </div>
                       </div>
 
-                      <div>
-                        <label className="block text-xs font-bold uppercase tracking-wider text-zinc-500 mb-2">Temporary Password</label>
-                        <div className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2">
-                          <Lock className="h-4 w-4 text-zinc-400" />
-                          <input
-                            type="password"
-                            value={invitePassword}
-                            onChange={(e) => setInvitePassword(e.target.value)}
-                            placeholder="Min 6 characters"
-                            className="w-full bg-transparent text-sm text-zinc-900 outline-none"
-                          />
-                        </div>
-                        <p className="mt-1 text-[10px] text-zinc-400 italic">Required only for new employees to log in.</p>
-                      </div>
-
                       <div className="space-y-2">
                         <label className="block text-xs font-bold uppercase tracking-wider text-zinc-500">Module Access Permissions</label>
                         <div className="grid grid-cols-1 gap-2 max-h-60 overflow-y-auto p-1 border border-zinc-100 rounded-xl">
@@ -991,7 +900,7 @@ export default function SettingsPage() {
                         ) : (
                           <div className="space-y-3">
                             {members.map((member) => {
-                              const isSelf = member.userId === auth.currentUser?.uid;
+                              const isSelf = member.userId === authUser?.uid;
                               const isMemberOwner = member.userId === currentOrg.ownerId;
                               const isEditing = editingMemberId === member.id;
                               return (
@@ -1054,7 +963,7 @@ export default function SettingsPage() {
                                                 notifyError('Cannot remove the organization owner!');
                                                 return;
                                               }
-                                              if (member.userId === auth.currentUser?.uid) {
+                                              if (member.userId === authUser?.uid) {
                                                 notifyError('Cannot remove yourself!');
                                                 return;
                                               }
@@ -1133,78 +1042,6 @@ export default function SettingsPage() {
             )}
           </div>
         )}
-
-        {activeTab === 'security' && (
-          <div className="space-y-8 animate-in fade-in duration-200">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-              <div className="md:col-span-1 space-y-2">
-                <h3 className="font-bold text-zinc-900 text-lg">Account Login Credentials</h3>
-                <p className="text-sm text-zinc-500">
-                  {isGoogleOnlyUser
-                    ? 'Your account is currently Google-only. Set a password below to also enable email + password login.'
-                    : 'Update your login password.'}
-                </p>
-                {isGoogleOnlyUser && (
-                  <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 text-xs text-blue-800 space-y-1 mt-4">
-                    <p className="font-bold">🔗 Google Account</p>
-                    <p className="text-blue-700">
-                      Once you set a password, you'll be able to log in with both Google <em>and</em> your email + new password.
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              <div className="md:col-span-2 bg-white border border-zinc-200 rounded-2xl p-6 shadow-sm">
-                <h4 className="font-bold text-zinc-900 mb-4 flex items-center gap-2">
-                  <Key className="w-5 h-5 text-orange-500" />
-                  {isGoogleOnlyUser ? 'Set a Password' : 'Change Password'}
-                </h4>
-
-                <form onSubmit={handleUpdatePassword} className="space-y-4">
-                  {/* Password update fields */}
-
-                  <div>
-                    <label className="block text-xs font-bold uppercase tracking-wider text-zinc-500 mb-2">
-                      {isGoogleOnlyUser ? 'New Password' : 'New Password'}
-                    </label>
-                    <input
-                      type="password"
-                      value={newPassword}
-                      onChange={(e) => setNewPassword(e.target.value)}
-                      placeholder="At least 6 characters"
-                      required
-                      className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500 transition-all text-sm"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold uppercase tracking-wider text-zinc-500 mb-2">Confirm New Password</label>
-                    <input
-                      type="password"
-                      value={confirmNewPassword}
-                      onChange={(e) => setConfirmNewPassword(e.target.value)}
-                      placeholder="Repeat your new password"
-                      required
-                      className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500 transition-all text-sm"
-                    />
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={updatingPassword}
-                    className="flex items-center justify-center gap-2 rounded-xl bg-orange-500 px-6 py-2.5 text-sm font-bold text-white shadow-lg shadow-orange-100 hover:bg-orange-600 transition-all disabled:opacity-50"
-                  >
-                    {updatingPassword
-                      ? 'Saving…'
-                      : isGoogleOnlyUser
-                      ? 'Set Password'
-                      : 'Update Password'}
-                  </button>
-                </form>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Edit Store & Company Settings Popup Modal */}
@@ -1243,7 +1080,7 @@ export default function SettingsPage() {
                       type="text"
                       value={modalForm.storeName}
                       onChange={(e) => setModalForm({ ...modalForm, storeName: e.target.value })}
-                      placeholder="e.g. Stockii Network"
+                      placeholder="e.g. Purit Network"
                       className="w-full rounded-xl border border-zinc-200 px-4 py-2.5 text-sm font-medium text-zinc-900 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 outline-none transition-all"
                     />
                   </div>
@@ -1297,7 +1134,7 @@ export default function SettingsPage() {
                       type="email"
                       value={modalForm.email}
                       onChange={(e) => setModalForm({ ...modalForm, email: e.target.value })}
-                      placeholder="e.g. support@stockii.com"
+                      placeholder="e.g. support@purit.com"
                       className="w-full rounded-xl border border-zinc-200 px-4 py-2.5 text-sm font-medium text-zinc-900 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 outline-none transition-all"
                     />
                   </div>

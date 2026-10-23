@@ -43,8 +43,7 @@ import { downloadExcelWorkbook, downloadTablePdf, printHtml } from '../utils/rep
 import { PremiumDateField } from '../components/PremiumDateField';
 import { AppSelect } from '../components/AppSelect';
 import { expenseService } from '../services/expenseService';
-import { db } from '../firebase';
-import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { supabase } from '../supabaseClient';
 import SuperDeleteConfirmModal from '../components/SuperDeleteConfirmModal';
 
 const getFallbackName = (email?: string, defaultFallback: string = 'Unknown Staff') => {
@@ -99,12 +98,14 @@ export default function ExpenseTrackerPage() {
       }
       
       try {
-        const membershipsQuery = query(collection(db, 'memberships'), where('orgId', '==', currentOrg.id));
-        const membershipsSnap = await getDocs(membershipsQuery);
+        const { data: membershipsData } = await supabase
+          .from('memberships')
+          .select('*')
+          .eq('orgId', currentOrg.id);
+
         const membershipsLookup: Record<string, string> = {};
-        membershipsSnap.docs.forEach((doc) => {
-          const data = doc.data();
-          membershipsLookup[data.userId] = data.role || '';
+        (membershipsData || []).forEach((item: any) => {
+          membershipsLookup[item.userId] = item.role || '';
         });
 
         const uniqueUserIds: string[] = Array.from(new Set(entries.map((e) => e.userId).filter((id): id is string => Boolean(id))));
@@ -122,12 +123,17 @@ export default function ExpenseTrackerPage() {
                 };
                 return;
               }
-              const userSnap = await getDoc(doc(db, 'users', uid));
-              if (userSnap.exists()) {
-                const userData = userSnap.data() as User;
+              const { data: userData } = await supabase
+                .from('users')
+                .select('*')
+                .eq('uid', uid)
+                .maybeSingle();
+
+              if (userData) {
+                const userObj = userData as User;
                 lookup[uid] = {
-                  displayName: userData.displayName || getFallbackName(userData.email || '', 'Team Member'),
-                  email: userData.email || 'No Email',
+                  displayName: userObj.displayName || getFallbackName(userObj.email || '', 'Team Member'),
+                  email: userObj.email || 'No Email',
                   role,
                 };
               } else {

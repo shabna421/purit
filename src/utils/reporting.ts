@@ -500,9 +500,9 @@ function buildPremiumInvoicePdfBlob(data: InvoicePdfData) {
   const pageWidth = 595;
   const pageHeight = 842;
   const margin = 40;
-  const orangeColor = '1.0 0.45 0.0';
-  const orangeLightBg = '1.0 0.968 0.93';
-  const orangeLightBorder = '1.0 0.929 0.835';
+  const orangeColor = '0.086 0.639 0.365';
+  const orangeLightBg = '0.941 0.992 0.957';
+  const orangeLightBorder = '0.733 0.969 0.816';
   const grayLightBg = '0.98 0.98 0.98';
   const borderGray = '0.92 0.92 0.92';
   const borderSubtle = '0.95 0.95 0.95';
@@ -518,8 +518,8 @@ function buildPremiumInvoicePdfBlob(data: InvoicePdfData) {
     commands = [];
     y = pageHeight - margin;
 
-    // Draw Stockii Logo
-    // Orange rounded box:
+    // Draw Purit Logo
+    // Green rounded box:
     commands.push(`${orangeColor} rg ${margin} ${pageHeight - margin - 38} 38 38 re f`);
     // White package icon:
     commands.push(`1.0 1.0 1.0 RG 1.5 w`);
@@ -532,7 +532,7 @@ function buildPremiumInvoicePdfBlob(data: InvoicePdfData) {
     commands.push(`${cx} ${cy} m ${cx} ${cy + 12} l S`);
 
     // Brand text
-    const brandName = data.organizationName || data.sellerName || 'Stockii Network';
+    const brandName = data.organizationName || data.sellerName || 'Purit Network';
     const brandTagline = data.organizationSubtitle;
 
     commands.push(`${textDark} rg`);
@@ -605,7 +605,7 @@ function buildPremiumInvoicePdfBlob(data: InvoicePdfData) {
       const maxCardTextWidth = cardWidth - 24;
 
       // Process Seller Lines
-      const sellerNameStr = data.sellerName || data.organizationName || 'Stockii Network';
+      const sellerNameStr = data.sellerName || data.organizationName || 'Purit Network';
       const sellerNameLines = wrapPdfText(sellerNameStr, maxCardTextWidth, 9.5);
 
       const effectiveSellerAddress = data.sellerAddress || 'Main Warehouse\nKozhikode, Kerala - 673631';
@@ -619,7 +619,7 @@ function buildPremiumInvoicePdfBlob(data: InvoicePdfData) {
       const effectiveSellerPhone = data.sellerPhone || '+91 98765 43210';
       const sellerPhoneLines = effectiveSellerPhone ? wrapPdfText(`Phone: ${effectiveSellerPhone}`, maxCardTextWidth, 8.5) : [];
 
-      const effectiveSellerEmail = data.sellerEmail || 'support@stockii.com';
+      const effectiveSellerEmail = data.sellerEmail || 'support@purit.com';
       const sellerEmailLines = effectiveSellerEmail ? wrapPdfText(`Email: ${effectiveSellerEmail}`, maxCardTextWidth, 8.5) : [];
 
       const effectiveSellerGstin = data.sellerGstin || '32ABCDE1234F1Z5';
@@ -1011,9 +1011,9 @@ function buildCustomerLedgerPdfBlob(data: CustomerLedgerPdfData) {
   const pageHeight = 842;
   const margin = 30;
 
-  const orangeColor = '1.0 0.45 0.0';
-  const orangeLightBg = '1.0 0.965 0.93';
-  const orangeLightBorder = '1.0 0.92 0.83';
+  const orangeColor = '0.086 0.639 0.365';
+  const orangeLightBg = '0.941 0.992 0.957';
+  const orangeLightBorder = '0.733 0.969 0.816';
   const redColor = '0.85 0.20 0.15';
   const redLightBg = '1.0 0.94 0.93';
   const redLightBorder = '0.92 0.70 0.65';
@@ -1035,7 +1035,7 @@ function buildCustomerLedgerPdfBlob(data: CustomerLedgerPdfData) {
     y = pageHeight - margin;
 
     // Header Top Left: Dynamic Store Name & Tagline
-    const storeName = data.organizationName || 'Stockii Store';
+    const storeName = data.organizationName || 'Purit Store';
     const tagline = data.organizationSubtitle || 'smart inventory management';
 
     commands.push(`${textDark} rg`);
@@ -1303,7 +1303,7 @@ function buildCustomerLedgerPdfBlob(data: CustomerLedgerPdfData) {
 
   commands.push(`${textLight} rg`);
   commands.push(`BT /F3 8.5 Tf ${margin} ${footerY} Td (Thank you for your business.) Tj ET`);
-  const genStr = `Generated on ${format(new Date(), 'dd MMM yyyy, HH:mm')} - ${data.organizationName || 'Stockii'}`;
+  const genStr = `Generated on ${format(new Date(), 'dd MMM yyyy, HH:mm')} - ${data.organizationName || 'Purit'}`;
   const genW = estimatePdfTextWidth(genStr, 8);
   commands.push(`BT /F1 8 Tf ${pageWidth - margin - genW} ${footerY} Td (${escapePdfString(genStr)}) Tj ET`);
 

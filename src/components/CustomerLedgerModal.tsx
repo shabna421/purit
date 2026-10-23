@@ -201,7 +201,7 @@ function calculateCustomerLedgerData({
   const periodLabel = `${format(start, 'dd MMM yyyy')} - ${format(end, 'dd MMM yyyy')}`;
 
   const pdfData: CustomerLedgerPdfData = {
-    organizationName: currentOrg.settings?.storeName || currentOrg.name || 'Stockii Store',
+    organizationName: currentOrg.settings?.storeName || currentOrg.name || 'Purit Store',
     organizationSubtitle: currentOrg.settings?.tagline || 'smart inventory management',
     sellerAddress: currentOrg.settings?.address || '',
     sellerPhone: currentOrg.settings?.phone || '',
@@ -804,7 +804,7 @@ export function CustomerLedgerModal({
                     <div className="flex flex-col sm:flex-row items-center justify-between gap-2 text-[11px] text-zinc-400 border-t border-zinc-200 pt-3">
                       <span>Thank you for your business.</span>
                       <span>
-                        Generated on {format(new Date(), 'dd MMM yyyy, HH:mm')} - {ledgerData.pdfData.organizationName || 'Stockii'}
+                        Generated on {format(new Date(), 'dd MMM yyyy, HH:mm')} - {ledgerData.pdfData.organizationName || 'Purit'}
                       </span>
                     </div>
                   </div>

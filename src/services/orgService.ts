@@ -1,30 +1,25 @@
-import { 
-  doc, 
-  getDoc, 
-  setDoc, 
-  updateDoc, 
-  collection, 
-  query, 
-  where, 
-  getDocs,
-  runTransaction
-} from 'firebase/firestore';
-import { db } from '../firebase';
-import { Organization, OrganizationSettings, Membership, Role, User } from '../types';
+import { supabase } from '../supabaseClient';
+import { Organization, OrganizationSettings, Membership, Role } from '../types';
+import { generateId } from './dbUtils';
 
 export const orgService = {
-  async getOrganization(orgId: string) {
-    const docRef = doc(db, 'organizations', orgId);
-    const snap = await getDoc(docRef);
-    return snap.exists() ? snap.data() as Organization : null;
+  async getOrganization(orgId: string): Promise<Organization | null> {
+    const { data, error } = await supabase
+      .from('organizations')
+      .select('*')
+      .eq('id', orgId)
+      .maybeSingle();
+
+    if (error) {
+      console.error('Error fetching organization:', error);
+      throw new Error(error.message);
+    }
+    return data as Organization | null;
   },
 
-  async updateSettings(orgId: string, settings: Partial<OrganizationSettings>) {
-    const docRef = doc(db, 'organizations', orgId);
-    const snap = await getDoc(docRef);
-    const currentSettings: Partial<OrganizationSettings> = snap.exists()
-      ? ((snap.data() as Organization).settings || {})
-      : {};
+  async updateSettings(orgId: string, settings: Partial<OrganizationSettings>): Promise<void> {
+    const org = await this.getOrganization(orgId);
+    const currentSettings: Partial<OrganizationSettings> = org?.settings || {};
     const nextSettings = {
       ...currentSettings,
       ...settings,
@@ -33,24 +28,45 @@ export const orgService = {
         ...(settings.modules || {}),
       },
     };
-    await updateDoc(docRef, {
-      settings: nextSettings
-    });
+
+    const { error } = await supabase
+      .from('organizations')
+      .update({ settings: nextSettings })
+      .eq('id', orgId);
+
+    if (error) {
+      console.error('Error updating organization settings:', error);
+      throw new Error(error.message);
+    }
   },
 
-  async getMemberships(orgId: string) {
-    const q = query(collection(db, 'memberships'), where('orgId', '==', orgId));
-    const snap = await getDocs(q);
-    return snap.docs.map(d => d.data() as Membership);
+  async getMemberships(orgId: string): Promise<Membership[]> {
+    const { data, error } = await supabase
+      .from('memberships')
+      .select('*')
+      .eq('orgId', orgId);
+
+    if (error) {
+      console.error('Error fetching memberships:', error);
+      throw new Error(error.message);
+    }
+    return (data || []) as Membership[];
   },
 
-  async updateMemberRole(membershipId: string, role: Role) {
-    const docRef = doc(db, 'memberships', membershipId);
-    await updateDoc(docRef, { role });
+  async updateMemberRole(membershipId: string, role: Role): Promise<void> {
+    const { error } = await supabase
+      .from('memberships')
+      .update({ role })
+      .eq('id', membershipId);
+
+    if (error) {
+      console.error('Error updating member role:', error);
+      throw new Error(error.message);
+    }
   },
 
-  async createOrganization(ownerId: string, name: string, slug: string) {
-    const orgId = doc(collection(db, 'organizations')).id;
+  async createOrganization(ownerId: string, name: string, slug: string): Promise<Organization> {
+    const orgId = generateId();
     const org: Organization = {
       id: orgId,
       name,
@@ -80,9 +96,9 @@ export const orgService = {
           truckInventory: false,
           staffManagement: true,
           advancedReports: true,
-          alerts: true
-        }
-      }
+          alerts: true,
+        },
+      },
     };
 
     const membership: Membership = {
@@ -90,14 +106,27 @@ export const orgService = {
       orgId,
       userId: ownerId,
       role: 'owner',
-      joinedAt: Date.now()
+      joinedAt: Date.now(),
     };
 
-    await runTransaction(db, async (transaction) => {
-      transaction.set(doc(db, 'organizations', orgId), org);
-      transaction.set(doc(db, 'memberships', membership.id), membership);
-    });
+    const { error: orgError } = await supabase
+      .from('organizations')
+      .insert(org);
+
+    if (orgError) {
+      console.error('Error creating organization:', orgError);
+      throw new Error(orgError.message);
+    }
+
+    const { error: memError } = await supabase
+      .from('memberships')
+      .insert(membership);
+
+    if (memError) {
+      console.error('Error creating owner membership:', memError);
+      throw new Error(memError.message);
+    }
 
     return org;
-  }
+  },
 };

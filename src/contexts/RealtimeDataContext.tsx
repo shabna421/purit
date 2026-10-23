@@ -1,6 +1,5 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
-import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
-import { db } from '../firebase';
+import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import { supabase } from '../supabaseClient';
 import { useTenancy } from '../contexts';
 import {
   Item,
@@ -25,6 +24,7 @@ interface RealtimeDataContextType {
   customers: Customer[];
   suppliers: Supplier[];
   loading: boolean;
+  refreshData: () => Promise<void>;
 }
 
 const RealtimeDataContext = createContext<RealtimeDataContextType | undefined>(undefined);
@@ -42,6 +42,115 @@ export function RealtimeDataProvider({ children }: { children: React.ReactNode }
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const fetchItems = useCallback(async (orgId: string) => {
+    const { data } = await supabase
+      .from('items')
+      .select('*')
+      .eq('orgId', orgId)
+      .order('name');
+    if (data) setItems(data as Item[]);
+  }, []);
+
+  const fetchLocations = useCallback(async (orgId: string) => {
+    const { data } = await supabase
+      .from('locations')
+      .select('*')
+      .eq('orgId', orgId)
+      .order('name');
+    if (data) setLocations(data as InventoryLocation[]);
+  }, []);
+
+  const fetchCategories = useCallback(async (orgId: string) => {
+    const { data } = await supabase
+      .from('categories')
+      .select('*')
+      .eq('orgId', orgId)
+      .order('name');
+    if (data) setCategories(data as ItemCategory[]);
+  }, []);
+
+  const fetchTransactions = useCallback(async (orgId: string) => {
+    const { data } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('orgId', orgId)
+      .order('timestamp', { ascending: false });
+    if (data) setTransactions(data as InventoryTransaction[]);
+  }, []);
+
+  const fetchSales = useCallback(async (orgId: string) => {
+    const { data } = await supabase
+      .from('sales')
+      .select('*')
+      .eq('orgId', orgId)
+      .order('timestamp', { ascending: false });
+    if (data) setSales(data as Sale[]);
+  }, []);
+
+  const fetchPurchases = useCallback(async (orgId: string) => {
+    const { data } = await supabase
+      .from('purchases')
+      .select('*')
+      .eq('orgId', orgId)
+      .order('timestamp', { ascending: false });
+    if (data) setPurchases(data as Purchase[]);
+  }, []);
+
+  const fetchExpenses = useCallback(async (orgId: string) => {
+    const { data } = await supabase
+      .from('expense_entries')
+      .select('*')
+      .eq('orgId', orgId)
+      .order('entryDate', { ascending: false });
+    if (data) setExpenses(data as ExpenseEntry[]);
+  }, []);
+
+  const fetchCustomers = useCallback(async (orgId: string) => {
+    const { data } = await supabase
+      .from('customers')
+      .select('*')
+      .eq('orgId', orgId)
+      .order('name');
+    if (data) setCustomers(data as Customer[]);
+  }, []);
+
+  const fetchSuppliers = useCallback(async (orgId: string) => {
+    const { data } = await supabase
+      .from('suppliers')
+      .select('*')
+      .eq('orgId', orgId)
+      .order('name');
+    if (data) setSuppliers(data as Supplier[]);
+  }, []);
+
+  const refreshAll = useCallback(async (orgId: string) => {
+    try {
+      await Promise.allSettled([
+        fetchItems(orgId),
+        fetchLocations(orgId),
+        fetchCategories(orgId),
+        fetchTransactions(orgId),
+        fetchSales(orgId),
+        fetchPurchases(orgId),
+        fetchExpenses(orgId),
+        fetchCustomers(orgId),
+        fetchSuppliers(orgId),
+      ]);
+    } catch (err) {
+      console.error('Error fetching realtime data:', err);
+    }
+  }, [
+    fetchItems,
+    fetchLocations,
+    fetchCategories,
+    fetchTransactions,
+    fetchSales,
+    fetchPurchases,
+    fetchExpenses,
+    fetchCustomers,
+    fetchSuppliers,
+  ]);
+
   useEffect(() => {
     if (!currentOrg) {
       setItems([]);
@@ -57,84 +166,60 @@ export function RealtimeDataProvider({ children }: { children: React.ReactNode }
       return;
     }
 
+    const orgId = currentOrg.id;
     setLoading(true);
 
-    const orgId = currentOrg.id;
-    const unsubscribes: (() => void)[] = [];
+    // Initial load
+    refreshAll(orgId).finally(() => setLoading(false));
 
-    const handleError = (collectionName: string, error: any) => {
-      console.error(`Error in subscription to ${collectionName}:`, error);
-    };
-
-    // 1. Items
-    const itemsQuery = query(collection(db, 'organizations', orgId, 'items'), orderBy('name'));
-    const unsubItems = onSnapshot(itemsQuery, (snapshot) => {
-      setItems(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as Item)));
-    }, (err) => handleError('items', err));
-    unsubscribes.push(unsubItems);
-
-    // 2. Locations
-    const locationsQuery = query(collection(db, 'organizations', orgId, 'locations'), orderBy('name'));
-    const unsubLocations = onSnapshot(locationsQuery, (snapshot) => {
-      setLocations(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as InventoryLocation)));
-    }, (err) => handleError('locations', err));
-    unsubscribes.push(unsubLocations);
-
-    // 3. Categories
-    const categoriesQuery = query(collection(db, 'organizations', orgId, 'categories'), orderBy('name'));
-    const unsubCategories = onSnapshot(categoriesQuery, (snapshot) => {
-      setCategories(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as ItemCategory)));
-    }, (err) => handleError('categories', err));
-    unsubscribes.push(unsubCategories);
-
-    // 4. Transactions
-    const transactionsQuery = query(collection(db, 'organizations', orgId, 'transactions'), orderBy('timestamp', 'desc'));
-    const unsubTransactions = onSnapshot(transactionsQuery, (snapshot) => {
-      setTransactions(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as InventoryTransaction)));
-    }, (err) => handleError('transactions', err));
-    unsubscribes.push(unsubTransactions);
-
-    // 5. Sales
-    const salesQuery = query(collection(db, 'organizations', orgId, 'sales'), orderBy('timestamp', 'desc'));
-    const unsubSales = onSnapshot(salesQuery, (snapshot) => {
-      setSales(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as Sale)));
-    }, (err) => handleError('sales', err));
-    unsubscribes.push(unsubSales);
-
-    // 6. Purchases
-    const purchasesQuery = query(collection(db, 'organizations', orgId, 'purchases'), orderBy('timestamp', 'desc'));
-    const unsubPurchases = onSnapshot(purchasesQuery, (snapshot) => {
-      setPurchases(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as Purchase)));
-    }, (err) => handleError('purchases', err));
-    unsubscribes.push(unsubPurchases);
-
-    // 7. Expenses
-    const expensesQuery = query(collection(db, 'organizations', orgId, 'expenseEntries'), orderBy('entryDate', 'desc'));
-    const unsubExpenses = onSnapshot(expensesQuery, (snapshot) => {
-      setExpenses(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as ExpenseEntry)));
-    }, (err) => handleError('expenses', err));
-    unsubscribes.push(unsubExpenses);
-
-    // 8. Customers
-    const customersQuery = query(collection(db, 'organizations', orgId, 'customers'), orderBy('name'));
-    const unsubCustomers = onSnapshot(customersQuery, (snapshot) => {
-      setCustomers(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as Customer)));
-    }, (err) => handleError('customers', err));
-    unsubscribes.push(unsubCustomers);
-
-    // 9. Suppliers
-    const suppliersQuery = query(collection(db, 'organizations', orgId, 'suppliers'), orderBy('name'));
-    const unsubSuppliers = onSnapshot(suppliersQuery, (snapshot) => {
-      setSuppliers(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as Supplier)));
-    }, (err) => handleError('suppliers', err));
-    unsubscribes.push(unsubSuppliers);
-
-    setLoading(false);
+    // Supabase Realtime channel subscription
+    const channel = supabase
+      .channel(`realtime_org_${orgId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', filter: `orgId=eq.${orgId}` },
+        (payload) => {
+          const table = payload.table;
+          switch (table) {
+            case 'items':
+              fetchItems(orgId);
+              break;
+            case 'locations':
+              fetchLocations(orgId);
+              break;
+            case 'categories':
+              fetchCategories(orgId);
+              break;
+            case 'transactions':
+              fetchTransactions(orgId);
+              break;
+            case 'sales':
+              fetchSales(orgId);
+              break;
+            case 'purchases':
+              fetchPurchases(orgId);
+              break;
+            case 'expense_entries':
+              fetchExpenses(orgId);
+              break;
+            case 'customers':
+              fetchCustomers(orgId);
+              break;
+            case 'suppliers':
+              fetchSuppliers(orgId);
+              break;
+            default:
+              refreshAll(orgId);
+              break;
+          }
+        }
+      )
+      .subscribe();
 
     return () => {
-      unsubscribes.forEach((unsub) => unsub());
+      supabase.removeChannel(channel);
     };
-  }, [currentOrg]);
+  }, [currentOrg, refreshAll, fetchItems, fetchLocations, fetchCategories, fetchTransactions, fetchSales, fetchPurchases, fetchExpenses, fetchCustomers, fetchSuppliers]);
 
   return (
     <RealtimeDataContext.Provider
@@ -149,6 +234,7 @@ export function RealtimeDataProvider({ children }: { children: React.ReactNode }
         customers,
         suppliers,
         loading,
+        refreshData: () => (currentOrg ? refreshAll(currentOrg.id) : Promise.resolve()),
       }}
     >
       {children}
