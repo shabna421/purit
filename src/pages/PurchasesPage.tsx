@@ -85,17 +85,17 @@ export default function PurchasesPage() {
               >
                 {/* Header */}
                 <div className="mb-4 flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-3">
+                  <div className="flex min-w-0 flex-1 items-center gap-3">
                     <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-blue-50 text-blue-600">
                       <PackagePlus className="h-5 w-5" />
                     </div>
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-bold text-zinc-900">{getSupplierName(purchase.supplierId)}</p>
+                    <div className="min-w-0 flex-1">
+                      <p className="line-clamp-2 break-words text-sm font-bold text-zinc-900">{getSupplierName(purchase.supplierId)}</p>
                       <p className="font-mono text-xs font-bold text-zinc-400">#{purchase.id.slice(-6).toUpperCase()}</p>
                     </div>
                   </div>
-                  <div className="flex flex-col items-end gap-1.5">
-                    <span className={`inline-flex rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${status.cls}`}>
+                  <div className="flex shrink-0 flex-col items-end gap-1.5">
+                    <span className={`inline-flex shrink-0 whitespace-nowrap rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${status.cls}`}>
                       {status.label}
                     </span>
                     <ChevronRight className="h-4 w-4 text-zinc-300 transition-colors group-hover:text-orange-500" />

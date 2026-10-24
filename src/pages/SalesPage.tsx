@@ -336,17 +336,17 @@ export default function SalesPage() {
                 className="group w-full rounded-2xl border border-zinc-200 bg-white p-5 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md active:scale-[0.99]"
               >
                 <div className="mb-4 flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-3">
+                  <div className="flex min-w-0 flex-1 items-center gap-3">
                     <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-orange-50 text-orange-500">
                       <ShoppingCart className="h-5 w-5" />
                     </div>
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-bold text-zinc-900">{getCustomerName(sale.customerId)}</p>
+                    <div className="min-w-0 flex-1">
+                      <p className="line-clamp-2 break-words text-sm font-bold text-zinc-900">{getCustomerName(sale.customerId)}</p>
                       <p className="font-mono text-xs font-bold text-zinc-400">#{sale.id.slice(-6).toUpperCase()}</p>
                     </div>
                   </div>
 
-                  <div className="flex items-start gap-1.5">
+                  <div className="flex shrink-0 items-start gap-1.5">
                     <button
                       type="button"
                       onClick={(event) => {
@@ -354,13 +354,13 @@ export default function SalesPage() {
                         setSaleToDelete(sale);
                       }}
                       disabled={deletingSaleId === sale.id}
-                      className="rounded-xl border border-red-200 p-2 text-red-500 transition-colors hover:bg-red-50 disabled:opacity-50"
+                      className="shrink-0 rounded-xl border border-red-200 p-2 text-red-500 transition-colors hover:bg-red-50 disabled:opacity-50"
                       aria-label={`Delete sale ${sale.id}`}
                     >
                       {deletingSaleId === sale.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                     </button>
-                    <div className="flex flex-col items-end gap-1.5">
-                      <span className={`inline-flex rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${status.cls}`}>
+                    <div className="flex shrink-0 flex-col items-end gap-1.5">
+                      <span className={`inline-flex shrink-0 whitespace-nowrap rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${status.cls}`}>
                         {status.label}
                       </span>
                       <ChevronRight className="h-4 w-4 text-zinc-300 transition-colors group-hover:text-orange-500" />
