@@ -624,62 +624,9 @@ export const CreateSalePage: React.FC = () => {
     }
   };
 
-  const fetchFreshInvoiceSnapshot = async (saleId: string, customerId?: string) => {
+  const fetchFreshInvoiceSnapshot = async (saleId: string) => {
     if (!currentOrg) return null;
-
-    const freshSale = await saleService.getSale(currentOrg.id, saleId);
-    if (!freshSale) return null;
-
-    const effCustomerId = freshSale.customerId || customerId;
-    const [freshCustomer, freshCustomerPayments, freshSalePayments, freshItems, freshLocations] = await Promise.all([
-      effCustomerId ? saleService.getCustomer(currentOrg.id, effCustomerId) : Promise.resolve(null),
-      effCustomerId ? saleService.getCustomerPaymentRecords(currentOrg.id, effCustomerId) : Promise.resolve([]),
-      saleService.getSalePaymentRecords(currentOrg.id, freshSale.id),
-      inventoryService.getItems(currentOrg.id, { includeDeleted: true }),
-      inventoryService.getLocations(currentOrg.id),
-    ]);
-
-    const paymentMap = new Map<string, PaymentRecord>();
-    freshCustomerPayments.forEach((p) => paymentMap.set(p.id, p));
-    freshSalePayments.forEach((p) => paymentMap.set(p.id, p));
-    const allRelevantPayments = Array.from(paymentMap.values()).sort((a, b) => b.timestamp - a.timestamp);
-
-    const freshLocation = freshLocations.find((l) => l.id === freshSale.locationId) || null;
-
-    // Check all recent payments made against this invoice
-    const directPaymentsReceived = allRelevantPayments
-      .filter((p) => p.referenceId === freshSale.id && p.direction === 'payment_received')
-      .reduce((sum, p) => sum + p.amount, 0);
-
-    const basePaid = freshSale.paidAmount || 0;
-    const freshTotalPaid = freshSale.paymentType === 'cash'
-      ? freshSale.totalAmount
-      : Math.min(freshSale.totalAmount, Math.max(basePaid, basePaid + directPaymentsReceived, directPaymentsReceived));
-
-    const freshDueAmount = Math.max(0, freshSale.totalAmount - freshTotalPaid);
-
-    const linkedSaleDueRecord = allRelevantPayments.find(
-      (record) => record.referenceId === freshSale.id && (record.direction === 'sale_due_added' || record.direction === 'sale_due_updated')
-    );
-    const freshOldDueAmount = Math.max(
-      freshSale.previousDueAmount ??
-        (linkedSaleDueRecord
-          ? (linkedSaleDueRecord.balanceAfter || 0) - linkedSaleDueRecord.amount
-          : (freshCustomer?.balance || 0) - freshDueAmount),
-      0
-    );
-    const freshGrandTotalPayable = freshOldDueAmount + freshSale.totalAmount;
-
-    return {
-      freshSale,
-      freshCustomer,
-      freshLocation,
-      freshItems,
-      freshTotalPaid,
-      freshDueAmount,
-      freshOldDueAmount,
-      freshGrandTotalPayable,
-    };
+    return await saleService.getRealtimeInvoiceData(currentOrg.id, saleId);
   };
 
   const handleDownloadInvoice = async (data: { sale: Sale; customer: Customer | null; location: InventoryLocation | null }) => {
@@ -688,14 +635,15 @@ export const CreateSalePage: React.FC = () => {
 
     setInvoiceActionLoading('download');
     try {
-      const snapshot = await fetchFreshInvoiceSnapshot(sale.id, customer?.id);
-      const activeSale = snapshot?.freshSale || sale;
-      const activeCustomer = snapshot?.freshCustomer || customer;
-      const activeLocation = snapshot?.freshLocation || location;
-      const activeItems = snapshot?.freshItems || items;
-      const totalPaid = snapshot?.freshTotalPaid ?? (activeSale.paymentType === 'credit' ? activeSale.paidAmount : activeSale.totalAmount);
-      const oldDueAmount = snapshot?.freshOldDueAmount ?? (activeSale.previousDueAmount ?? 0);
-      const grandTotalPayable = snapshot?.freshGrandTotalPayable ?? (oldDueAmount + activeSale.totalAmount);
+      const snapshot = await fetchFreshInvoiceSnapshot(sale.id);
+      const activeSale = snapshot?.sale || sale;
+      const activeCustomer = snapshot?.customer || customer;
+      const activeLocation = snapshot?.location || location;
+      const activeItems = snapshot?.items || items;
+      const totalPaid = snapshot?.paidAmount ?? (activeSale.paymentType === 'credit' ? activeSale.paidAmount : activeSale.totalAmount);
+      const oldDueAmount = snapshot?.oldDueAmount ?? 0;
+      const grandTotalPayable = snapshot?.grandTotalPayable ?? (oldDueAmount + activeSale.totalAmount);
+      const paidStatus = snapshot?.paidStatus ?? (Math.max(0, activeSale.totalAmount - totalPaid) <= 0.001 ? 'PAID' : (totalPaid > 0.001 ? 'PARTIALLY PAID' : 'UNPAID'));
 
       const customInvoiceNumber = activeSale.isGstBill && activeSale.gstBillNumber ? activeSale.gstBillNumber : `#${activeSale.id.slice(-8).toUpperCase()}`;
 
@@ -732,6 +680,7 @@ export const CreateSalePage: React.FC = () => {
         detailRows: [
           { label: 'Date', value: format(activeSale.timestamp, 'MMM dd, yyyy HH:mm') },
           { label: 'Payment', value: activeSale.paymentType.toUpperCase() },
+          { label: 'Status', value: paidStatus },
           { label: 'Location', value: activeLocation?.name || 'Main Warehouse' },
         ],
         items: activeSale.items.map((line) => {
@@ -754,6 +703,7 @@ export const CreateSalePage: React.FC = () => {
         oldDueAmount,
         currentBillAmount: activeSale.totalAmount,
         grandTotalAmount: grandTotalPayable,
+        paidStatus,
         notes: activeSale.notes,
         footerReference: activeSale.isGstBill && activeSale.gstBillNumber ? activeSale.gstBillNumber : activeSale.id,
       };
@@ -773,14 +723,15 @@ export const CreateSalePage: React.FC = () => {
 
     setInvoiceActionLoading('print');
     try {
-      const snapshot = await fetchFreshInvoiceSnapshot(sale.id, customer?.id);
-      const activeSale = snapshot?.freshSale || sale;
-      const activeCustomer = snapshot?.freshCustomer || customer;
-      const activeLocation = snapshot?.freshLocation || location;
-      const activeItems = snapshot?.freshItems || items;
-      const totalPaid = snapshot?.freshTotalPaid ?? (activeSale.paymentType === 'credit' ? activeSale.paidAmount : activeSale.totalAmount);
-      const oldDueAmount = snapshot?.freshOldDueAmount ?? (activeSale.previousDueAmount ?? 0);
-      const grandTotalPayable = snapshot?.freshGrandTotalPayable ?? (oldDueAmount + activeSale.totalAmount);
+      const snapshot = await fetchFreshInvoiceSnapshot(sale.id);
+      const activeSale = snapshot?.sale || sale;
+      const activeCustomer = snapshot?.customer || customer;
+      const activeLocation = snapshot?.location || location;
+      const activeItems = snapshot?.items || items;
+      const totalPaid = snapshot?.paidAmount ?? (activeSale.paymentType === 'credit' ? activeSale.paidAmount : activeSale.totalAmount);
+      const oldDueAmount = snapshot?.oldDueAmount ?? 0;
+      const grandTotalPayable = snapshot?.grandTotalPayable ?? (oldDueAmount + activeSale.totalAmount);
+      const paidStatus = snapshot?.paidStatus ?? (Math.max(0, activeSale.totalAmount - totalPaid) <= 0.001 ? 'PAID' : (totalPaid > 0.001 ? 'PARTIALLY PAID' : 'UNPAID'));
 
       const customInvoiceNumber = activeSale.isGstBill && activeSale.gstBillNumber ? activeSale.gstBillNumber : `#${activeSale.id.slice(-8).toUpperCase()}`;
 
@@ -817,6 +768,7 @@ export const CreateSalePage: React.FC = () => {
         detailRows: [
           { label: 'Date', value: format(activeSale.timestamp, 'MMM dd, yyyy HH:mm') },
           { label: 'Payment', value: activeSale.paymentType.toUpperCase() },
+          { label: 'Status', value: paidStatus },
           { label: 'Location', value: activeLocation?.name || 'Main Warehouse' },
         ],
         items: activeSale.items.map((line) => {
@@ -839,6 +791,7 @@ export const CreateSalePage: React.FC = () => {
         oldDueAmount,
         currentBillAmount: activeSale.totalAmount,
         grandTotalAmount: grandTotalPayable,
+        paidStatus,
         notes: activeSale.notes,
         footerReference: activeSale.isGstBill && activeSale.gstBillNumber ? activeSale.gstBillNumber : activeSale.id,
       };

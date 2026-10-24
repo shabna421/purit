@@ -39,6 +39,7 @@ export interface InvoicePdfData {
   oldDueAmount?: number;
   currentBillAmount?: number;
   grandTotalAmount?: number;
+  paidStatus?: string;
   notes?: string;
   footerReference?: string;
 }
@@ -514,6 +515,22 @@ function buildPremiumInvoicePdfBlob(data: InvoicePdfData) {
   let commands: string[] = [];
   let y = 0;
 
+  // Real-time payment calculations for invoice status
+  const grandTotal = data.total;
+  const paidVal = data.paidAmount ?? grandTotal;
+  const balDue = Math.max(grandTotal - paidVal, 0);
+  const rawStatus = (data.paidStatus || (
+    balDue <= 0.001 ? 'PAID' : (paidVal > 0.001 ? 'PARTIALLY PAID' : 'UNPAID')
+  )).toUpperCase();
+
+  const isPaid = rawStatus === 'PAID';
+  const isPartial = rawStatus === 'PARTIALLY PAID' || rawStatus === 'PARTIAL';
+  const statusTextLabel = isPaid ? 'PAID' : (isPartial ? 'PARTIALLY PAID' : 'UNPAID');
+
+  const sBg = isPaid ? '0.90 0.98 0.92' : (isPartial ? '1.0 0.96 0.88' : '1.0 0.93 0.93');
+  const sBorder = isPaid ? '0.60 0.88 0.68' : (isPartial ? '0.96 0.80 0.50' : '0.95 0.70 0.70');
+  const sText = isPaid ? '0.08 0.55 0.28' : (isPartial ? '0.80 0.45 0.05' : '0.82 0.18 0.18');
+
   const startPage = (continuation = false) => {
     commands = [];
     y = pageHeight - margin;
@@ -562,6 +579,19 @@ function buildPremiumInvoicePdfBlob(data: InvoicePdfData) {
     const invNumW = estimatePdfTextWidth(invNumStr, 13);
     commands.push(`${orangeColor} rg`);
     commands.push(`BT /F2 13 Tf ${badgeX + badgeW - 12 - invNumW} ${badgeY + 7} Td (${escapePdfString(invNumStr)}) Tj ET`);
+
+    // Status Badge (PAID / PARTIALLY PAID / UNPAID)
+    const statusBadgeW = isPartial ? 96 : 74;
+    const statusBadgeH = 26;
+    const statusBadgeX = badgeX - statusBadgeW - 8;
+    const statusBadgeY = badgeY + 6;
+
+    commands.push(`${sBg} rg ${statusBadgeX} ${statusBadgeY} ${statusBadgeW} ${statusBadgeH} re f`);
+    commands.push(`${sBorder} RG 0.8 w ${statusBadgeX} ${statusBadgeY} ${statusBadgeW} ${statusBadgeH} re S`);
+    const sTextW = estimatePdfTextWidth(statusTextLabel, 8.5);
+    const sTextX = statusBadgeX + (statusBadgeW - sTextW) / 2;
+    commands.push(`${sText} rg`);
+    commands.push(`BT /F2 8.5 Tf ${sTextX} ${statusBadgeY + 9} Td (${escapePdfString(statusTextLabel)}) Tj ET`);
 
     if (!continuation) {
       // Info Grid Row (Invoice No. | Invoice Date | Place of Supply)
@@ -852,7 +882,6 @@ function buildPremiumInvoicePdfBlob(data: InvoicePdfData) {
   const cgstAmount = (data.taxAmount || 0) / 2;
   const sgstAmount = (data.taxAmount || 0) / 2;
   const taxAmountVal = data.taxAmount || 0;
-  const grandTotal = data.total;
 
   let totalsY = y - 80;
   
@@ -899,8 +928,6 @@ function buildPremiumInvoicePdfBlob(data: InvoicePdfData) {
   const oldDue = data.oldDueAmount || 0;
   const currentBill = data.currentBillAmount ?? grandTotal;
   const grandPayable = data.grandTotalAmount ?? (oldDue + currentBill);
-  const paidVal = data.paidAmount ?? grandTotal;
-  const balDue = Math.max(grandTotal - paidVal, 0);
 
   const psHeight = 108;
   const psY = gtY - 12 - psHeight;
@@ -910,6 +937,11 @@ function buildPremiumInvoicePdfBlob(data: InvoicePdfData) {
   
   commands.push(`${orangeColor} rg`);
   commands.push(`BT /F2 8 Tf ${totalsX + 12} ${psY + 92} Td (PAYMENT SUMMARY) Tj ET`);
+
+  const psStatusStr = `[${statusTextLabel}]`;
+  const psStatusW = estimatePdfTextWidth(psStatusStr, 8);
+  commands.push(`${sText} rg`);
+  commands.push(`BT /F2 8 Tf ${totalsX + totalsWidth - 12 - psStatusW} ${psY + 92} Td (${escapePdfString(psStatusStr)}) Tj ET`);
 
   commands.push(`${textMuted} rg`);
   commands.push(`BT /F1 8.5 Tf ${totalsX + 12} ${psY + 76} Td (Paid Amount) Tj ET`);

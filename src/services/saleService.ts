@@ -7,9 +7,26 @@ import {
   CustomerReturn,
   ReturnLine,
   CashLedgerTransaction,
+  Item,
+  InventoryLocation,
 } from '../types';
 import { isValidQuantityForUnit } from '../utils/quantity';
 import { generateId, stripUndefined } from './dbUtils';
+
+export interface RealtimeInvoiceSnapshot {
+  sale: Sale;
+  customer: Customer | null;
+  items: Item[];
+  locations: InventoryLocation[];
+  location: InventoryLocation | null;
+  paymentRecords: PaymentRecord[];
+  totalAmount: number;
+  paidAmount: number;
+  dueAmount: number;
+  oldDueAmount: number;
+  grandTotalPayable: number;
+  paidStatus: 'PAID' | 'PARTIALLY PAID' | 'UNPAID';
+}
 
 function normalizeSaleLines(items: Sale['items']) {
   return items
@@ -1168,5 +1185,190 @@ export const saleService = {
       .eq('orgId', orgId);
 
     await this.recalculateCustomerBalanceAndHistory(orgId, customerId);
+  },
+
+  async getRealtimeInvoiceData(
+    orgId: string,
+    saleId: string
+  ): Promise<RealtimeInvoiceSnapshot | null> {
+    // 1. Fetch fresh sale directly from database
+    const { data: saleData, error: saleErr } = await supabase
+      .from('sales')
+      .select('*')
+      .eq('id', saleId)
+      .eq('orgId', orgId)
+      .maybeSingle();
+
+    if (saleErr || !saleData) return null;
+    const freshSale = saleData as Sale;
+
+    // 2. Fetch fresh customer, payments, items, locations, sales and returns in parallel
+    const [custRes, custPaymentsRes, salePaymentsRes, itemsRes, locsRes, salesRes, returnsRes] = await Promise.all([
+      freshSale.customerId
+        ? supabase.from('customers').select('*').eq('id', freshSale.customerId).eq('orgId', orgId).maybeSingle()
+        : Promise.resolve({ data: null }),
+      freshSale.customerId
+        ? supabase.from('payments').select('*').eq('orgId', orgId).eq('entityType', 'customer').eq('entityId', freshSale.customerId)
+        : Promise.resolve({ data: [] }),
+      supabase.from('payments').select('*').eq('orgId', orgId).eq('referenceId', freshSale.id),
+      supabase.from('items').select('*').eq('orgId', orgId),
+      supabase.from('locations').select('*').eq('orgId', orgId),
+      freshSale.customerId
+        ? supabase.from('sales').select('*').eq('orgId', orgId).eq('customerId', freshSale.customerId)
+        : Promise.resolve({ data: [] }),
+      freshSale.customerId
+        ? supabase.from('customer_returns').select('*').eq('orgId', orgId).eq('customerId', freshSale.customerId)
+        : Promise.resolve({ data: [] }),
+    ]);
+
+    const freshCustomer = custRes.data as Customer | null;
+    const freshItems = (itemsRes.data || []) as Item[];
+    const freshLocations = (locsRes.data || []) as InventoryLocation[];
+    const customerPayments = (custPaymentsRes.data || []) as PaymentRecord[];
+    const salePayments = (salePaymentsRes.data || []) as PaymentRecord[];
+    const customerSales = (salesRes.data || []) as Sale[];
+    const customerReturns = (returnsRes.data || []) as CustomerReturn[];
+
+    const paymentMap = new Map<string, PaymentRecord>();
+    customerPayments.forEach((p) => paymentMap.set(p.id, p));
+    salePayments.forEach((p) => paymentMap.set(p.id, p));
+    const allRelevantPayments = Array.from(paymentMap.values()).sort((a, b) => a.timestamp - b.timestamp);
+
+    const freshLocation = freshLocations.find((l) => l.id === freshSale.locationId) || null;
+    const totalAmount = roundCurrencyAmount(freshSale.totalAmount);
+
+    // Direct payments specifically made towards this sale
+    const directPaymentsReceived = allRelevantPayments
+      .filter((p) => p.referenceId === freshSale.id && p.direction === 'payment_received')
+      .reduce((sum, p) => sum + p.amount, 0);
+
+    let paidAmount = 0;
+    let dueAmount = 0;
+    let oldDueAmount = 0;
+
+    if (!freshCustomer) {
+      // Walk-in customer without ledger profile
+      const basePaid = freshSale.paymentType === 'cash' ? totalAmount : roundCurrencyAmount(freshSale.paidAmount || 0);
+      paidAmount = roundCurrencyAmount(
+        freshSale.paymentType === 'cash'
+          ? totalAmount
+          : Math.min(totalAmount, Math.max(basePaid, basePaid + directPaymentsReceived, directPaymentsReceived))
+      );
+      dueAmount = roundCurrencyAmount(Math.max(0, totalAmount - paidAmount));
+      oldDueAmount = 0;
+    } else {
+      const currentCustomerBalance = roundCurrencyAmount(Math.max(0, freshCustomer.balance || 0));
+
+      if (freshSale.paymentType === 'cash') {
+        paidAmount = totalAmount;
+        dueAmount = 0;
+        oldDueAmount = currentCustomerBalance;
+      } else {
+        // Credit sale: Always recalculate in real-time from database payment data
+        if (currentCustomerBalance <= 0) {
+          // If customer has no outstanding balance at all, everything is settled!
+          paidAmount = totalAmount;
+          dueAmount = 0;
+          oldDueAmount = 0;
+        } else {
+          // Map direct payments on other sales
+          const otherSaleDirectPayments = new Map<string, number>();
+          allRelevantPayments
+            .filter((p) => p.referenceId && p.referenceId !== freshSale.id && p.direction === 'payment_received')
+            .forEach((p) => {
+              otherSaleDirectPayments.set(p.referenceId!, (otherSaleDirectPayments.get(p.referenceId!) || 0) + p.amount);
+            });
+
+          // Debts from earlier sales or manual due additions prior to this sale
+          const priorSales = customerSales.filter(
+            (s) => s.id !== freshSale.id && (s.timestamp < freshSale.timestamp || (s.timestamp === freshSale.timestamp && s.id < freshSale.id))
+          );
+          let priorDebts = 0;
+          priorSales.forEach((s) => {
+            if (s.paymentType !== 'cash') {
+              const initialPaid = s.paidAmount || 0;
+              const directPaid = otherSaleDirectPayments.get(s.id) || 0;
+              const netOwed = Math.max(0, s.totalAmount - Math.max(initialPaid, directPaid));
+              priorDebts += netOwed;
+            }
+          });
+
+          allRelevantPayments
+            .filter((p) => p.direction === 'balance_added' && p.timestamp < freshSale.timestamp)
+            .forEach((p) => {
+              priorDebts += p.amount;
+            });
+
+          // Initial debt of this sale
+          const basePaid = Math.max(0, freshSale.paidAmount || 0);
+          const thisSaleInitialDebt = Math.max(0, totalAmount - Math.max(basePaid, directPaymentsReceived));
+
+          // General customer payments and credits available to clear debt
+          let availableGeneralPayments = allRelevantPayments
+            .filter((p) => (
+              (p.direction === 'payment_received' && (!p.referenceId || p.referenceId === freshCustomer.id)) ||
+              p.direction === 'write_off' ||
+              p.direction === 'return_refund'
+            ))
+            .reduce((sum, p) => sum + p.amount, 0);
+
+          customerReturns.forEach((r) => {
+            availableGeneralPayments += r.totalAmount;
+          });
+
+          // Apply general payments FIFO
+          const generalToPrior = Math.min(priorDebts, availableGeneralPayments);
+          const remainingPriorDebt = priorDebts - generalToPrior;
+          const generalRemaining = availableGeneralPayments - generalToPrior;
+
+          const generalToThisSale = Math.min(thisSaleInitialDebt, generalRemaining);
+          const remainingThisSaleDebt = thisSaleInitialDebt - generalToThisSale;
+
+          dueAmount = roundCurrencyAmount(remainingThisSaleDebt);
+          paidAmount = roundCurrencyAmount(Math.min(totalAmount, totalAmount - dueAmount));
+          oldDueAmount = roundCurrencyAmount(remainingPriorDebt);
+
+          // Reconcile with latest customer balance from DB
+          if (dueAmount > currentCustomerBalance) {
+            dueAmount = currentCustomerBalance;
+            paidAmount = roundCurrencyAmount(Math.max(0, totalAmount - dueAmount));
+            oldDueAmount = 0;
+          } else if (oldDueAmount + dueAmount > currentCustomerBalance) {
+            oldDueAmount = roundCurrencyAmount(Math.max(0, currentCustomerBalance - dueAmount));
+          }
+        }
+      }
+    }
+
+    const grandTotalPayable = roundCurrencyAmount(oldDueAmount + totalAmount);
+    const paidStatus = dueAmount <= 0.001 ? 'PAID' : (paidAmount > 0.001 ? 'PARTIALLY PAID' : 'UNPAID');
+
+    // Keep sales table paidAmount synced with real-time payment calculations
+    if (freshSale.paidAmount !== paidAmount) {
+      try {
+        await supabase
+          .from('sales')
+          .update({ paidAmount })
+          .eq('id', freshSale.id)
+          .eq('orgId', orgId);
+      } catch (err) {
+        console.warn('Could not sync sale paidAmount in DB:', err);
+      }
+    }
+
+    return {
+      sale: { ...freshSale, paidAmount },
+      customer: freshCustomer,
+      items: freshItems,
+      locations: freshLocations,
+      location: freshLocation,
+      paymentRecords: allRelevantPayments,
+      totalAmount,
+      paidAmount,
+      dueAmount,
+      oldDueAmount,
+      grandTotalPayable,
+      paidStatus,
+    };
   },
 };

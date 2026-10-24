@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useTenancy } from '../contexts';
-import { saleService } from '../services/saleService';
+import { saleService, RealtimeInvoiceSnapshot } from '../services/saleService';
 import { inventoryService } from '../services/inventoryService';
 import { Sale, Item, Customer, InventoryLocation, PaymentRecord } from '../types';
 import { Printer, ArrowLeft, Download, Loader2, Package, FileText } from 'lucide-react';
@@ -72,6 +72,7 @@ export const InvoicePage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { currentOrg } = useTenancy();
+  const [snapshot, setSnapshot] = useState<RealtimeInvoiceSnapshot | null>(null);
   const [sale, setSale] = useState<Sale | null>(null);
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [items, setItems] = useState<Item[]>([]);
@@ -112,41 +113,23 @@ export const InvoicePage: React.FC = () => {
     const fetchData = async () => {
       if (!currentOrg || !id) return;
       try {
-        const saleData = await saleService.getSale(currentOrg.id, id);
-        if (saleData) {
-          setSale(saleData);
-          const [custs, allItems, locs, payments] = await Promise.all([
-            saleService.getCustomers(currentOrg.id),
-            inventoryService.getItems(currentOrg.id, { includeDeleted: true }),
-            inventoryService.getLocations(currentOrg.id),
-            saleService.getCustomerPaymentRecords(currentOrg.id, saleData.customerId),
-          ]);
-          setCustomer(custs.find(c => c.id === saleData.customerId) || null);
-          setItems(allItems);
-          setLocation(locs.find(l => l.id === saleData.locationId) || null);
-          setPaymentRecords(payments);
+        const freshSnapshot = await saleService.getRealtimeInvoiceData(currentOrg.id, id);
+        if (freshSnapshot) {
+          setSnapshot(freshSnapshot);
+          setSale(freshSnapshot.sale);
+          setCustomer(freshSnapshot.customer);
+          setItems(freshSnapshot.items);
+          setLocation(freshSnapshot.location);
+          setPaymentRecords(freshSnapshot.paymentRecords);
         }
       } catch (error) {
-        console.error(error);
+        console.error('Error loading fresh invoice snapshot:', error);
       } finally {
         setLoading(false);
       }
     };
     fetchData();
   }, [currentOrg, id]);
-
-  const currentSaleDue = sale ? Math.max(sale.totalAmount - sale.paidAmount, 0) : 0;
-  const linkedSaleDueRecord = sale
-    ? paymentRecords.find((record) => record.referenceId === sale.id && (record.direction === 'sale_due_added' || record.direction === 'sale_due_updated'))
-    : undefined;
-  const oldDueAmount = Math.max(
-    sale?.previousDueAmount ??
-      (linkedSaleDueRecord
-        ? (linkedSaleDueRecord.balanceAfter || 0) - linkedSaleDueRecord.amount
-        : (customer?.balance || 0) - currentSaleDue),
-    0
-  );
-  const grandTotalPayable = oldDueAmount + (sale?.totalAmount || 0);
 
   const sellerName = currentOrg?.settings?.storeName || currentOrg?.name || 'Purit Network';
   const sellerTagline = currentOrg?.settings?.tagline || 'smart inventory management';
@@ -159,86 +142,32 @@ export const InvoicePage: React.FC = () => {
 
   const fetchFreshInvoiceSnapshotAndRecalculate = async () => {
     if (!currentOrg || !id) return null;
-
-    const freshSale = await saleService.getSale(currentOrg.id, id);
-    if (!freshSale) return null;
-
-    const [freshCustomer, freshCustomerPayments, freshSalePayments, freshItems, freshLocations] = await Promise.all([
-      freshSale.customerId ? saleService.getCustomer(currentOrg.id, freshSale.customerId) : Promise.resolve(null),
-      freshSale.customerId ? saleService.getCustomerPaymentRecords(currentOrg.id, freshSale.customerId) : Promise.resolve([]),
-      saleService.getSalePaymentRecords(currentOrg.id, freshSale.id),
-      inventoryService.getItems(currentOrg.id, { includeDeleted: true }),
-      inventoryService.getLocations(currentOrg.id),
-    ]);
-
-    const paymentMap = new Map<string, PaymentRecord>();
-    freshCustomerPayments.forEach((p) => paymentMap.set(p.id, p));
-    freshSalePayments.forEach((p) => paymentMap.set(p.id, p));
-    const allRelevantPayments = Array.from(paymentMap.values()).sort((a, b) => b.timestamp - a.timestamp);
-
-    const freshLocation = freshLocations.find((l) => l.id === freshSale.locationId) || location;
-
-    // Query recent payments made against this invoice
-    const directPaymentsReceived = allRelevantPayments
-      .filter((p) => p.referenceId === freshSale.id && p.direction === 'payment_received')
-      .reduce((sum, p) => sum + p.amount, 0);
-
-    const basePaid = freshSale.paidAmount || 0;
-    const freshTotalPaid = freshSale.paymentType === 'cash'
-      ? freshSale.totalAmount
-      : Math.min(freshSale.totalAmount, Math.max(basePaid, basePaid + directPaymentsReceived, directPaymentsReceived));
-
-    const freshDueAmount = Math.max(0, freshSale.totalAmount - freshTotalPaid);
-
-    const linkedSaleDueRecord = allRelevantPayments.find(
-      (record) => record.referenceId === freshSale.id && (record.direction === 'sale_due_added' || record.direction === 'sale_due_updated')
-    );
-    const freshOldDueAmount = Math.max(
-      freshSale.previousDueAmount ??
-        (linkedSaleDueRecord
-          ? (linkedSaleDueRecord.balanceAfter || 0) - linkedSaleDueRecord.amount
-          : (freshCustomer?.balance || 0) - freshDueAmount),
-      0
-    );
-    const freshGrandTotalPayable = freshOldDueAmount + freshSale.totalAmount;
+    const freshSnapshot = await saleService.getRealtimeInvoiceData(currentOrg.id, id);
+    if (!freshSnapshot) return null;
 
     // Dynamically update component state so on-screen invoice immediately syncs to fresh snapshot
-    setSale(freshSale);
-    if (freshCustomer) setCustomer(freshCustomer);
-    setPaymentRecords(allRelevantPayments);
-    setItems(freshItems);
-    if (freshLocation) setLocation(freshLocation);
+    setSnapshot(freshSnapshot);
+    setSale(freshSnapshot.sale);
+    if (freshSnapshot.customer) setCustomer(freshSnapshot.customer);
+    setPaymentRecords(freshSnapshot.paymentRecords);
+    setItems(freshSnapshot.items);
+    if (freshSnapshot.location) setLocation(freshSnapshot.location);
 
-    return {
-      freshSale,
-      freshCustomer,
-      freshLocation,
-      freshItems,
-      freshTotalPaid,
-      freshDueAmount,
-      freshOldDueAmount,
-      freshGrandTotalPayable,
-    };
+    return freshSnapshot;
   };
 
-  const buildInvoicePdfDataFromSnapshot = (data: {
-    freshSale: Sale;
-    freshCustomer: Customer | null;
-    freshLocation: InventoryLocation | null;
-    freshItems: Item[];
-    freshTotalPaid: number;
-    freshDueAmount: number;
-    freshOldDueAmount: number;
-    freshGrandTotalPayable: number;
-  }) => {
+  const buildInvoicePdfDataFromSnapshot = (data: RealtimeInvoiceSnapshot) => {
     const {
-      freshSale,
-      freshCustomer,
-      freshLocation,
-      freshItems,
-      freshTotalPaid,
-      freshOldDueAmount,
-      freshGrandTotalPayable,
+      sale: freshSale,
+      customer: freshCustomer,
+      location: freshLocation,
+      items: freshItems,
+      totalAmount,
+      paidAmount,
+      dueAmount,
+      oldDueAmount,
+      grandTotalPayable,
+      paidStatus,
     } = data;
     if (!currentOrg) return null;
 
@@ -272,6 +201,7 @@ export const InvoicePage: React.FC = () => {
       detailRows: [
         { label: 'Date', value: format(freshSale.timestamp, 'MMM dd, yyyy HH:mm') },
         { label: 'Payment', value: freshSale.paymentType.toUpperCase() },
+        { label: 'Status', value: paidStatus },
         { label: 'Location', value: freshLocation?.name || 'Main Warehouse' },
       ],
       items: freshSale.items.map((line) => {
@@ -285,16 +215,17 @@ export const InvoicePage: React.FC = () => {
           hsnSac: item?.hsnSac || '8414',
         };
       }),
-      subtotal: freshSale.totalAmount - (freshSale.taxAmount || 0),
+      subtotal: totalAmount - (freshSale.taxAmount || 0),
       taxLabel: freshSale.isGstBill
         ? `GST (${freshSale.taxRate ?? 18}%)`
         : (freshSale.taxAmount > 0 ? `Tax (${freshSale.taxRate ?? (currentOrg?.settings?.taxRate ?? 0)}%)` : undefined),
       taxAmount: freshSale.taxAmount || 0,
-      total: freshSale.totalAmount,
-      paidAmount: freshTotalPaid,
-      oldDueAmount: freshOldDueAmount,
-      currentBillAmount: freshSale.totalAmount,
-      grandTotalAmount: freshGrandTotalPayable,
+      total: totalAmount,
+      paidAmount: paidAmount,
+      oldDueAmount: oldDueAmount,
+      currentBillAmount: totalAmount,
+      grandTotalAmount: grandTotalPayable,
+      paidStatus: paidStatus,
       notes: freshSale.notes,
       footerReference: freshSale.isGstBill && freshSale.gstBillNumber ? freshSale.gstBillNumber : freshSale.id,
     };
@@ -304,16 +235,16 @@ export const InvoicePage: React.FC = () => {
     if (actionLoading) return;
     setActionLoading('print');
     try {
-      const snapshot = await fetchFreshInvoiceSnapshotAndRecalculate();
-      if (!snapshot) return;
+      const freshSnapshot = await fetchFreshInvoiceSnapshotAndRecalculate();
+      if (!freshSnapshot) return;
 
-      const pdfData = buildInvoicePdfDataFromSnapshot(snapshot);
+      const pdfData = buildInvoicePdfDataFromSnapshot(freshSnapshot);
       if (!pdfData) return;
 
       const blob = createInvoicePdfBlob(pdfData);
-      const filename = snapshot.freshSale.isGstBill && snapshot.freshSale.gstBillNumber 
-        ? `invoice-${snapshot.freshSale.gstBillNumber}.pdf` 
-        : `invoice-${snapshot.freshSale.id.slice(-8).toUpperCase() || 'document'}.pdf`;
+      const filename = freshSnapshot.sale.isGstBill && freshSnapshot.sale.gstBillNumber 
+        ? `invoice-${freshSnapshot.sale.gstBillNumber}.pdf` 
+        : `invoice-${freshSnapshot.sale.id.slice(-8).toUpperCase() || 'document'}.pdf`;
       printPdfBlob(blob, filename);
     } catch (err) {
       console.error('Error generating fresh invoice PDF for print:', err);
@@ -326,15 +257,15 @@ export const InvoicePage: React.FC = () => {
     if (actionLoading) return;
     setActionLoading('download');
     try {
-      const snapshot = await fetchFreshInvoiceSnapshotAndRecalculate();
-      if (!snapshot) return;
+      const freshSnapshot = await fetchFreshInvoiceSnapshotAndRecalculate();
+      if (!freshSnapshot) return;
 
-      const pdfData = buildInvoicePdfDataFromSnapshot(snapshot);
+      const pdfData = buildInvoicePdfDataFromSnapshot(freshSnapshot);
       if (!pdfData) return;
 
-      const filename = snapshot.freshSale.isGstBill && snapshot.freshSale.gstBillNumber 
-        ? `invoice-${snapshot.freshSale.gstBillNumber}.pdf` 
-        : `invoice-${snapshot.freshSale.id.slice(-8).toUpperCase()}.pdf`;
+      const filename = freshSnapshot.sale.isGstBill && freshSnapshot.sale.gstBillNumber 
+        ? `invoice-${freshSnapshot.sale.gstBillNumber}.pdf` 
+        : `invoice-${freshSnapshot.sale.id.slice(-8).toUpperCase()}.pdf`;
       downloadInvoicePdf(filename, pdfData);
     } catch (err) {
       console.error('Error downloading fresh invoice PDF:', err);
@@ -366,8 +297,11 @@ export const InvoicePage: React.FC = () => {
   const cgstAmount = taxAmount / 2;
   const sgstAmount = taxAmount / 2;
   const subtotal = sale.totalAmount - taxAmount;
-  const paidAmount = sale.paymentType === 'credit' ? sale.paidAmount : sale.totalAmount;
-  const balanceDue = Math.max(sale.totalAmount - paidAmount, 0);
+  const paidAmount = snapshot ? snapshot.paidAmount : (sale.paymentType === 'credit' ? sale.paidAmount : sale.totalAmount);
+  const balanceDue = snapshot ? snapshot.dueAmount : Math.max(sale.totalAmount - paidAmount, 0);
+  const oldDueAmount = snapshot ? snapshot.oldDueAmount : 0;
+  const grandTotalPayable = snapshot ? snapshot.grandTotalPayable : (oldDueAmount + sale.totalAmount);
+  const paidStatus = snapshot ? snapshot.paidStatus : (balanceDue <= 0.001 ? 'PAID' : (paidAmount > 0.001 ? 'PARTIALLY PAID' : 'UNPAID'));
   const totalInWords = numberToWords(grandTotalPayable);
 
   return (
@@ -451,11 +385,22 @@ export const InvoicePage: React.FC = () => {
                 )}
               </div>
             </div>
-            <div className="bg-orange-50 border border-orange-100 rounded-lg px-6 py-2.5 text-right min-w-[180px] shrink-0 shadow-sm">
-              <p className="text-[9px] font-bold text-gray-600 tracking-wider uppercase opacity-90">GST TAX INVOICE</p>
-              <p className="text-lg font-extrabold text-orange-600 tracking-tight">
-                {sale.isGstBill && sale.gstBillNumber ? sale.gstBillNumber : `#${sale.id.slice(-8).toUpperCase()}`}
-              </p>
+            <div className="flex items-center gap-3">
+              <span className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider ${
+                paidStatus === 'PAID'
+                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                  : paidStatus === 'PARTIALLY PAID' || paidStatus === 'PARTIAL'
+                    ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                    : 'bg-rose-50 text-rose-700 border border-rose-200'
+              }`}>
+                {paidStatus}
+              </span>
+              <div className="bg-orange-50 border border-orange-100 rounded-lg px-6 py-2.5 text-right min-w-[180px] shrink-0 shadow-sm">
+                <p className="text-[9px] font-bold text-gray-600 tracking-wider uppercase opacity-90">GST TAX INVOICE</p>
+                <p className="text-lg font-extrabold text-orange-600 tracking-tight">
+                  {sale.isGstBill && sale.gstBillNumber ? sale.gstBillNumber : `#${sale.id.slice(-8).toUpperCase()}`}
+                </p>
+              </div>
             </div>
           </div>
 
@@ -621,7 +566,18 @@ export const InvoicePage: React.FC = () => {
 
               {/* Payment Summary Box */}
               <div className="border border-gray-100 rounded-xl p-4 bg-white shadow-sm space-y-2.5 text-xs">
-                <p className="font-bold text-orange-600 uppercase tracking-widest text-[9px] mb-2">PAYMENT SUMMARY</p>
+                <div className="flex justify-between items-center mb-1">
+                  <p className="font-bold text-orange-600 uppercase tracking-widest text-[9px]">PAYMENT SUMMARY</p>
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                    paidStatus === 'PAID'
+                      ? 'bg-emerald-100 text-emerald-700'
+                      : paidStatus === 'PARTIALLY PAID' || paidStatus === 'PARTIAL'
+                        ? 'bg-amber-100 text-amber-700'
+                        : 'bg-rose-100 text-rose-700'
+                  }`}>
+                    {paidStatus}
+                  </span>
+                </div>
                 <div className="flex justify-between text-gray-600">
                   <span>Paid Amount</span>
                   <span className="font-mono">INR {paidAmount.toFixed(2)}</span>
