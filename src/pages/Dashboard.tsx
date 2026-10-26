@@ -32,6 +32,7 @@ import {
   Award,
   Zap,
   Wallet,
+  Percent,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { AnimatePresence, motion } from 'motion/react';
@@ -348,7 +349,7 @@ function SalesTargetDashboardWidget({
   );
 }
 
-type PeriodFilter = 'today' | '7d' | '30d';
+type PeriodFilter = 'today' | '7d' | '30d' | 'this_month';
 
 export const Dashboard: React.FC = () => {
   const { currentOrg, membership } = useTenancy();
@@ -368,6 +369,7 @@ export const Dashboard: React.FC = () => {
   });
   const [calendarMonth, setCalendarMonth] = useState(startOfMonth(new Date()));
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
+  const [isMetricsExpanded, setIsMetricsExpanded] = useState(false);
 
   // Cash & Credit Drawer States
   const [isCashCreditOpen, setIsCashCreditOpen] = useState(false);
@@ -421,6 +423,25 @@ export const Dashboard: React.FC = () => {
 
   const drawerTotalCash = drawerSalesCash + drawerPurchasesCash;
   const drawerTotalCredit = drawerSalesCredit + drawerPurchasesCredit;
+
+  const allTimeSalesValue = useMemo(() => {
+    const totalFromSales = sales
+      ? sales.filter((s) => s.status !== 'cancelled').reduce((sum, s) => sum + (s.totalAmount || 0), 0)
+      : 0;
+    const totalFromTransactions = transactions
+      ? transactions
+          .filter((t) => t.type === 'SALE_OUT')
+          .reduce((sum, t) => sum + (t.unitSellPrice || 0) * t.quantity, 0)
+      : 0;
+
+    return totalFromSales > 0 ? totalFromSales : totalFromTransactions;
+  }, [sales, transactions]);
+
+  const allTimeSalesCount = useMemo(() => {
+    const countSales = sales ? sales.filter((s) => s.status !== 'cancelled').length : 0;
+    if (countSales > 0) return countSales;
+    return transactions ? transactions.filter((t) => t.type === 'SALE_OUT').length : 0;
+  }, [sales, transactions]);
   
   if (loading) {
     return (
@@ -440,22 +461,29 @@ export const Dashboard: React.FC = () => {
       };
     }
 
-    const start = (() => {
-      switch (periodFilter) {
-        case 'today':
-          return startOfDay(now);
-        case '30d':
-          return new Date(now.getTime() - 29 * 24 * 60 * 60 * 1000);
-        case '7d':
-        default:
-          return new Date(now.getTime() - 6 * 24 * 60 * 60 * 1000);
-      }
-    })();
-
-    return {
-      start,
-      end: endOfDay(now),
-    };
+    switch (periodFilter) {
+      case 'today':
+        return {
+          start: startOfDay(now),
+          end: endOfDay(now),
+        };
+      case 'this_month':
+        return {
+          start: startOfMonth(now),
+          end: endOfMonth(now),
+        };
+      case '30d':
+        return {
+          start: new Date(now.getTime() - 29 * 24 * 60 * 60 * 1000),
+          end: endOfDay(now),
+        };
+      case '7d':
+      default:
+        return {
+          start: new Date(now.getTime() - 6 * 24 * 60 * 60 * 1000),
+          end: endOfDay(now),
+        };
+    }
   })();
 
   const periodLabel = (() => {
@@ -466,6 +494,8 @@ export const Dashboard: React.FC = () => {
     switch (periodFilter) {
       case 'today':
         return 'Today';
+      case 'this_month':
+        return 'This Month';
       case '30d':
         return '30D';
       case '7d':
@@ -494,6 +524,23 @@ export const Dashboard: React.FC = () => {
       const saleValue = (transaction.unitSellPrice || 0) * transaction.quantity;
       return sum + (saleValue - estimatedCost);
     }, 0);
+
+  const filteredProfitPercentage = filteredSalesValue > 0
+    ? (filteredProfitValue / filteredSalesValue) * 100
+    : 0;
+
+  const getPeriodStatLabel = (prefix: string) => {
+    if (customRange.start && customRange.end) {
+      return `${prefix} (${periodLabel})`;
+    }
+    if (periodFilter === 'today') {
+      return `Today's ${prefix}`;
+    }
+    if (periodFilter === 'this_month') {
+      return `This Month's ${prefix}`;
+    }
+    return `${prefix} (${periodFilter.toUpperCase()})`;
+  };
 
   const activeItems = items.filter((item) => !item.isDeleted);
   const lowStockItems = activeItems.filter(i => i.currentStock <= i.reorderThreshold);
@@ -536,11 +583,12 @@ export const Dashboard: React.FC = () => {
             <p className="text-xs text-zinc-500">Compact snapshot of sales, dues, and inventory.</p>
           </div>
           <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
-            <div className="flex w-full items-center gap-1 rounded-2xl bg-zinc-100 p-1 sm:w-auto">
+            <div className="flex w-full items-center gap-1 rounded-2xl bg-zinc-100 p-1 sm:w-auto overflow-x-auto">
               {[
                 { key: 'today', label: 'Today' },
                 { key: '7d', label: '7D' },
                 { key: '30d', label: '30D' },
+                { key: 'this_month', label: 'This Month' },
               ].map((option) => (
                 <button
                   key={option.key}
@@ -550,18 +598,18 @@ export const Dashboard: React.FC = () => {
                     setCustomRange({ start: null, end: null });
                     setIsCalendarOpen(false);
                   }}
-                  className={`rounded-xl px-3 py-1.5 text-xs font-semibold transition-colors ${
-                    !customRange.start && periodFilter === option.key ? 'bg-white text-orange-600 shadow-sm' : 'text-zinc-600'
+                  className={`rounded-xl px-3 py-1.5 text-xs font-semibold whitespace-nowrap transition-colors shrink-0 ${
+                    !customRange.start && periodFilter === option.key ? 'bg-white text-orange-600 shadow-sm' : 'text-zinc-600 hover:text-zinc-900'
                   }`}
                 >
                   {option.label}
                 </button>
               ))}
-              <div className="relative ml-auto sm:ml-1">
+              <div className="relative ml-auto sm:ml-1 shrink-0">
                 <button
                   type="button"
                   onClick={() => setIsCalendarOpen((prev) => !prev)}
-                  className={`inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[11px] font-semibold transition-all ${
+                  className={`inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[11px] font-semibold whitespace-nowrap transition-all ${
                     customRange.start && customRange.end
                       ? 'border-orange-200 bg-orange-50 text-orange-700 shadow-sm'
                       : 'border-transparent bg-transparent text-zinc-600 hover:bg-white hover:text-zinc-900'
@@ -601,13 +649,13 @@ export const Dashboard: React.FC = () => {
 
         <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
           <StatCard
-            label={customRange.start && customRange.end ? `Sales (${periodLabel})` : periodFilter === 'today' ? "Today's Sales" : `Sales (${periodFilter.toUpperCase()})`}
+            label={getPeriodStatLabel('Sales')}
             value={formatCurrency(filteredSalesValue, currentOrg?.settings.currency)}
             icon={TrendingUp}
             color="blue"
           />
           <StatCard
-            label={customRange.start && customRange.end ? `Purchases (${periodLabel})` : periodFilter === 'today' ? "Today's Purchases" : `Purchases (${periodFilter.toUpperCase()})`}
+            label={getPeriodStatLabel('Purchases')}
             value={formatCurrency(filteredPurchasesValue, currentOrg?.settings.currency)}
             icon={ArrowDownLeft}
             color="orange"
@@ -615,13 +663,26 @@ export const Dashboard: React.FC = () => {
           <StatCard label="Receivables" value={formatCurrency(totalReceivables, currentOrg?.settings.currency)} icon={ArrowDownLeft} color="red" />
           <StatCard label="Stock Value" value={formatCurrency(stockValue, currentOrg?.settings.currency)} icon={Package} color="purple" />
           <StatCard
-            label={customRange.start && customRange.end ? `Total Profit (${periodLabel})` : periodFilter === 'today' ? "Today's Profit" : `Total Profit (${periodFilter.toUpperCase()})`}
+            label={getPeriodStatLabel('Total Profit')}
             value={formatCurrency(filteredProfitValue, currentOrg?.settings.currency)}
             icon={Sparkles}
             color="emerald"
             className="col-span-2 xl:col-span-4"
           />
         </div>
+
+        {/* Expandable dropdown section at the bottom of the dashboard metrics */}
+        <MetricsDropdownSection
+          isExpanded={isMetricsExpanded}
+          onToggle={() => setIsMetricsExpanded((prev) => !prev)}
+          filteredProfitValue={filteredProfitValue}
+          filteredSalesValue={filteredSalesValue}
+          allTimeSalesValue={allTimeSalesValue}
+          profitPercentage={filteredProfitPercentage}
+          periodLabel={periodLabel}
+          currency={currentOrg?.settings.currency}
+          salesCount={allTimeSalesCount}
+        />
       </div>
 
       {/* Sales Target Widget – visible if sales module is enabled */}
@@ -793,11 +854,12 @@ export const Dashboard: React.FC = () => {
                 <p className="text-xs text-zinc-500">Compact snapshot of sales, dues, and inventory.</p>
               </div>
               <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
-                <div className="flex w-full items-center gap-1 rounded-2xl bg-zinc-100 p-1 sm:w-auto">
+                <div className="flex w-full items-center gap-1 rounded-2xl bg-zinc-100 p-1 sm:w-auto overflow-x-auto">
                   {[
                     { key: 'today', label: 'Today' },
                     { key: '7d', label: '7D' },
                     { key: '30d', label: '30D' },
+                    { key: 'this_month', label: 'This Month' },
                   ].map((option) => (
                     <button
                       key={option.key}
@@ -807,18 +869,18 @@ export const Dashboard: React.FC = () => {
                         setCustomRange({ start: null, end: null });
                         setIsCalendarOpen(false);
                       }}
-                      className={`rounded-xl px-3 py-1.5 text-xs font-semibold transition-colors ${
-                        !customRange.start && periodFilter === option.key ? 'bg-white text-orange-600 shadow-sm' : 'text-zinc-600'
+                      className={`rounded-xl px-3 py-1.5 text-xs font-semibold whitespace-nowrap transition-colors shrink-0 ${
+                        !customRange.start && periodFilter === option.key ? 'bg-white text-orange-600 shadow-sm' : 'text-zinc-600 hover:text-zinc-900'
                       }`}
                     >
                       {option.label}
                     </button>
                   ))}
-                  <div className="relative ml-auto sm:ml-1">
+                  <div className="relative ml-auto sm:ml-1 shrink-0">
                     <button
                       type="button"
                       onClick={() => setIsCalendarOpen((prev) => !prev)}
-                      className={`inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[11px] font-semibold transition-all ${
+                      className={`inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[11px] font-semibold whitespace-nowrap transition-all ${
                         customRange.start && customRange.end
                           ? 'border-orange-200 bg-orange-50 text-orange-700 shadow-sm'
                           : 'border-transparent bg-transparent text-zinc-600 hover:bg-white hover:text-zinc-900'
@@ -858,7 +920,7 @@ export const Dashboard: React.FC = () => {
             <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
               {hasModulePermission('sales') && (
                 <StatCard
-                  label={customRange.start && customRange.end ? `Sales (${periodLabel})` : periodFilter === 'today' ? "Today's Sales" : `Sales (${periodFilter.toUpperCase()})`}
+                  label={getPeriodStatLabel('Sales')}
                   value={formatCurrency(filteredSalesValue, currentOrg?.settings.currency)}
                   icon={TrendingUp}
                   color="blue"
@@ -866,7 +928,7 @@ export const Dashboard: React.FC = () => {
               )}
               {hasModulePermission('purchases') && (
                 <StatCard
-                  label={customRange.start && customRange.end ? `Purchases (${periodLabel})` : periodFilter === 'today' ? "Today's Purchases" : `Purchases (${periodFilter.toUpperCase()})`}
+                  label={getPeriodStatLabel('Purchases')}
                   value={formatCurrency(filteredPurchasesValue, currentOrg?.settings.currency)}
                   icon={ArrowDownLeft}
                   color="orange"
@@ -877,7 +939,7 @@ export const Dashboard: React.FC = () => {
                   <StatCard label="Receivables" value={formatCurrency(totalReceivables, currentOrg?.settings.currency)} icon={ArrowDownLeft} color="red" />
                   <StatCard label="Stock Value" value={formatCurrency(stockValue, currentOrg?.settings.currency)} icon={Package} color="purple" />
                   <StatCard
-                    label={customRange.start && customRange.end ? `Total Profit (${periodLabel})` : periodFilter === 'today' ? "Today's Profit" : `Total Profit (${periodFilter.toUpperCase()})`}
+                    label={getPeriodStatLabel('Total Profit')}
                     value={formatCurrency(filteredProfitValue, currentOrg?.settings.currency)}
                     icon={Sparkles}
                     color="emerald"
@@ -886,6 +948,21 @@ export const Dashboard: React.FC = () => {
                 </>
               )}
             </div>
+
+            {/* Expandable dropdown section if user has sales or finance access */}
+            {(hasModulePermission('finance') || hasModulePermission('sales')) && (
+              <MetricsDropdownSection
+                isExpanded={isMetricsExpanded}
+                onToggle={() => setIsMetricsExpanded((prev) => !prev)}
+                filteredProfitValue={filteredProfitValue}
+                filteredSalesValue={filteredSalesValue}
+                allTimeSalesValue={allTimeSalesValue}
+                profitPercentage={filteredProfitPercentage}
+                periodLabel={periodLabel}
+                currency={currentOrg?.settings.currency}
+                salesCount={allTimeSalesCount}
+              />
+            )}
           </div>
         )}
 
@@ -1217,6 +1294,236 @@ export const Dashboard: React.FC = () => {
               </motion.div>
             </div>
           </div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
+
+interface MetricsDropdownSectionProps {
+  isExpanded: boolean;
+  onToggle: () => void;
+  filteredProfitValue: number;
+  filteredSalesValue: number;
+  allTimeSalesValue: number;
+  profitPercentage: number;
+  periodLabel: string;
+  currency?: string;
+  salesCount: number;
+}
+
+const MetricsDropdownSection: React.FC<MetricsDropdownSectionProps> = ({
+  isExpanded,
+  onToggle,
+  filteredProfitValue,
+  filteredSalesValue,
+  allTimeSalesValue,
+  profitPercentage,
+  periodLabel,
+  currency,
+  salesCount,
+}) => {
+  const getMarginBadge = () => {
+    if (filteredSalesValue <= 0) {
+      return {
+        label: 'No Sales in Period',
+        color: 'bg-zinc-100 text-zinc-600 border-zinc-200',
+      };
+    }
+    if (profitPercentage >= 25) {
+      return {
+        label: 'Strong Margin 🚀',
+        color: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+      };
+    }
+    if (profitPercentage >= 10) {
+      return {
+        label: 'Healthy Margin ✨',
+        color: 'bg-blue-50 text-blue-700 border-blue-200',
+      };
+    }
+    if (profitPercentage > 0) {
+      return {
+        label: 'Moderate Margin',
+        color: 'bg-amber-50 text-amber-700 border-amber-200',
+      };
+    }
+    return {
+      label: 'Negative Margin',
+      color: 'bg-rose-50 text-rose-700 border-rose-200',
+    };
+  };
+
+  const marginStatus = getMarginBadge();
+  const periodSalesShare = allTimeSalesValue > 0
+    ? Math.min(Math.max((filteredSalesValue / allTimeSalesValue) * 100, 0), 100)
+    : 0;
+
+  return (
+    <div className="mt-4 pt-3.5 border-t border-zinc-150">
+      {/* Dropdown Toggle Trigger */}
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full flex items-center justify-between p-3 rounded-2xl bg-zinc-50/90 hover:bg-orange-50/50 border border-zinc-200/80 hover:border-orange-200 transition-all text-left group"
+      >
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-8 h-8 rounded-xl bg-orange-500/10 text-orange-600 flex items-center justify-center shrink-0 group-hover:scale-105 group-hover:bg-orange-500 group-hover:text-white transition-all">
+            <Percent className="w-4 h-4" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-bold text-zinc-900 group-hover:text-orange-950 transition-colors">
+                Profit Margin & Sales Analysis
+              </span>
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800">
+                <Sparkles className="w-3 h-3 text-emerald-600" />
+                {profitPercentage.toFixed(1)}% Margin ({periodLabel})
+              </span>
+            </div>
+            <p className="hidden sm:block text-[11px] text-zinc-500 truncate mt-0.5">
+              Click to {isExpanded ? 'collapse' : 'view'} profit percentage formula and all-time total sales
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5 text-xs font-bold text-orange-600 shrink-0 ml-2">
+          <span className="hidden sm:inline">{isExpanded ? 'Hide Details' : 'View Details'}</span>
+          <div className={`w-6 h-6 rounded-lg bg-white border border-zinc-200 shadow-sm flex items-center justify-center transition-transform duration-200 ${isExpanded ? 'rotate-180 bg-orange-50 border-orange-200' : ''}`}>
+            <ChevronDown className="w-3.5 h-3.5" />
+          </div>
+        </div>
+      </button>
+
+      {/* Expandable Dropdown Content */}
+      <AnimatePresence>
+        {isExpanded && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.25, ease: 'easeInOut' }}
+            className="overflow-hidden"
+          >
+            <div className="pt-3.5 space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {/* 1. Profit Percentage Card */}
+                <div className="rounded-2xl border border-emerald-200/80 bg-gradient-to-br from-emerald-500/5 via-emerald-500/10 to-teal-500/5 p-4 relative overflow-hidden">
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-lg bg-emerald-500/10 text-emerald-700 flex items-center justify-center">
+                        <Percent className="w-3.5 h-3.5" />
+                      </div>
+                      <span className="text-[10px] font-mono uppercase tracking-widest text-emerald-800 font-bold">
+                        Profit Percentage ({periodLabel})
+                      </span>
+                    </div>
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${marginStatus.color}`}>
+                      {marginStatus.label}
+                    </span>
+                  </div>
+
+                  <div className="flex items-baseline gap-2 mt-1">
+                    <span className="text-2xl sm:text-3xl font-extrabold text-zinc-900 tracking-tight">
+                      {profitPercentage.toFixed(1)}%
+                    </span>
+                    <span className="text-xs font-semibold text-zinc-500">
+                      margin
+                    </span>
+                  </div>
+
+                  {/* Progress Meter */}
+                  <div className="w-full bg-emerald-950/10 h-2 rounded-full overflow-hidden mt-3">
+                    <div
+                      className="bg-gradient-to-r from-emerald-500 to-teal-500 h-full rounded-full transition-all duration-500"
+                      style={{ width: `${Math.min(Math.max(profitPercentage, 0), 100)}%` }}
+                    />
+                  </div>
+
+                  {/* Formula Breakdown */}
+                  <div className="mt-3 pt-2.5 border-t border-emerald-500/15 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 text-[11px]">
+                    <span className="text-emerald-900/70 font-medium">
+                      Formula: (Total Profit / Total Sales) × 100
+                    </span>
+                    <span className="font-mono text-emerald-950 font-bold">
+                      ({formatCurrency(filteredProfitValue, currency)} / {formatCurrency(filteredSalesValue, currency)}) × 100
+                    </span>
+                  </div>
+                </div>
+
+                {/* 2. All-Time Total Sales Card */}
+                <div className="rounded-2xl border border-blue-200/80 bg-gradient-to-br from-blue-500/5 via-indigo-500/10 to-violet-500/5 p-4 relative overflow-hidden">
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-lg bg-blue-500/10 text-blue-700 flex items-center justify-center">
+                        <TrendingUp className="w-3.5 h-3.5" />
+                      </div>
+                      <span className="text-[10px] font-mono uppercase tracking-widest text-blue-800 font-bold">
+                        All-Time Total Sales
+                      </span>
+                    </div>
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100/80 text-blue-800 border border-blue-200">
+                      Lifetime Revenue
+                    </span>
+                  </div>
+
+                  <div className="flex items-baseline gap-2 mt-1">
+                    <span className="text-2xl sm:text-3xl font-extrabold text-zinc-900 tracking-tight">
+                      {formatCurrency(allTimeSalesValue, currency)}
+                    </span>
+                    {salesCount > 0 && (
+                      <span className="text-xs font-semibold text-zinc-500">
+                        ({salesCount} {salesCount === 1 ? 'sale' : 'sales'})
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Share Progress Meter */}
+                  <div className="w-full bg-blue-950/10 h-2 rounded-full overflow-hidden mt-3">
+                    <div
+                      className="bg-gradient-to-r from-blue-500 to-indigo-500 h-full rounded-full transition-all duration-500"
+                      style={{ width: `${periodSalesShare}%` }}
+                    />
+                  </div>
+
+                  {/* Share Breakdown */}
+                  <div className="mt-3 pt-2.5 border-t border-blue-500/15 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 text-[11px]">
+                    <span className="text-blue-900/70 font-medium">
+                      Active Period Contribution:
+                    </span>
+                    <span className="font-mono text-blue-950 font-bold">
+                      {periodSalesShare.toFixed(1)}% of all-time sales ({formatCurrency(filteredSalesValue, currency)})
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Quick Summary Pill Bar - hidden on mobile screens */}
+              <div className="hidden sm:grid sm:grid-cols-4 gap-2 pt-1">
+                <div className="rounded-xl bg-zinc-50 border border-zinc-150 p-2.5 text-center">
+                  <p className="text-[9px] font-mono uppercase tracking-wider text-zinc-400">Active Filter</p>
+                  <p className="text-xs font-bold text-zinc-900 truncate mt-0.5">{periodLabel}</p>
+                </div>
+                <div className="rounded-xl bg-zinc-50 border border-zinc-150 p-2.5 text-center">
+                  <p className="text-[9px] font-mono uppercase tracking-wider text-zinc-400">Filtered Sales</p>
+                  <p className="text-xs font-bold text-blue-600 truncate mt-0.5">
+                    {formatCurrency(filteredSalesValue, currency)}
+                  </p>
+                </div>
+                <div className="rounded-xl bg-zinc-50 border border-zinc-150 p-2.5 text-center">
+                  <p className="text-[9px] font-mono uppercase tracking-wider text-zinc-400">Filtered Profit</p>
+                  <p className="text-xs font-bold text-emerald-600 truncate mt-0.5">
+                    {formatCurrency(filteredProfitValue, currency)}
+                  </p>
+                </div>
+                <div className="rounded-xl bg-zinc-50 border border-zinc-150 p-2.5 text-center">
+                  <p className="text-[9px] font-mono uppercase tracking-wider text-zinc-400">Profit Percentage</p>
+                  <p className="text-xs font-bold text-zinc-900 truncate mt-0.5">
+                    {profitPercentage.toFixed(1)}%
+                  </p>
+                </div>
+              </div>
+            </div>
+          </motion.div>
         )}
       </AnimatePresence>
     </div>
