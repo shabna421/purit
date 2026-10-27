@@ -29,6 +29,7 @@ import {
   Target,
   AlertCircle,
   BarChart3,
+  Droplets,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { AppSelect } from './components/AppSelect';
@@ -56,6 +57,7 @@ import DamagesPage from './pages/DamagesPage';
 import ExpenseTrackerPage from './pages/ExpenseTrackerPage';
 import BarcodePrintPage from './pages/BarcodePrintPage';
 import { ProductInsightsPage } from './pages/ProductInsightsPage';
+import DispensersPage from './pages/DispensersPage';
 
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
@@ -86,6 +88,7 @@ const navEntries: NavEntry[] = [
   { icon: AlertTriangle, label: 'Damages', to: '/damages', requires: 'damages' },
   { icon: FileText, label: 'Sales Report', to: '/sales-report', mobilePrimary: true },
   { icon: BarChart3, label: 'Product Insights', to: '/product-insights' },
+  { icon: Droplets, label: 'Dispenser', to: '/dispensers' },
   { icon: FileText, label: 'Reports', to: '/reports', requires: 'advancedReports' },
   { icon: Settings, label: 'Settings', to: '/settings' },
 ];
@@ -154,6 +157,7 @@ function MobileFooterNav({
             activePath.startsWith('/expenses') ||
             activePath.startsWith('/reports') ||
             activePath.startsWith('/product-insights') ||
+            activePath.startsWith('/dispensers') ||
             activePath.startsWith('/settings') ||
             activePath.startsWith('/trucks') ||
             activePath.startsWith('/returns') ||
@@ -592,6 +596,7 @@ function MainContent() {
         <Route path="/transactions" element={<TransactionsPage />} />
         <Route path="/sales-report" element={<SalesReportPage />} />
         <Route path="/product-insights" element={<ProductInsightsPage />} />
+        <Route path="/dispensers" element={<DispensersPage />} />
         <Route path="/reports" element={isAllowed('advancedReports') ? <ReportsPage /> : <Navigate to="/" replace />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/print/barcode" element={<BarcodePrintPage />} />
