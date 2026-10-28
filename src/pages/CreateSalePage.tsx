@@ -640,10 +640,12 @@ export const CreateSalePage: React.FC = () => {
       const activeCustomer = snapshot?.customer || customer;
       const activeLocation = snapshot?.location || location;
       const activeItems = snapshot?.items || items;
-      const totalPaid = snapshot?.paidAmount ?? (activeSale.paymentType === 'credit' ? activeSale.paidAmount : activeSale.totalAmount);
-      const oldDueAmount = snapshot?.oldDueAmount ?? 0;
-      const grandTotalPayable = snapshot?.grandTotalPayable ?? (oldDueAmount + activeSale.totalAmount);
-      const paidStatus = snapshot?.paidStatus ?? (Math.max(0, activeSale.totalAmount - totalPaid) <= 0.001 ? 'PAID' : (totalPaid > 0.001 ? 'PARTIALLY PAID' : 'UNPAID'));
+      const oldDueAmount = snapshot?.oldDueAmount ?? (activeSale.previousDueAmount ?? 0);
+      const totalPaid = snapshot?.paidAmount ?? (activeSale.paymentType === 'credit' ? (activeSale.paidAmount || 0) : activeSale.totalAmount);
+      const currentBillDue = snapshot?.currentBillDueAmount ?? Math.max(0, activeSale.totalAmount - totalPaid);
+      const totalOutstanding = snapshot?.totalOutstanding ?? (oldDueAmount + currentBillDue);
+      const grandTotalPayable = totalOutstanding;
+      const paidStatus = snapshot?.paidStatus ?? (currentBillDue <= 0.001 ? 'PAID' : (totalPaid > 0.001 ? 'PARTIALLY PAID' : 'UNPAID'));
 
       const customInvoiceNumber = activeSale.isGstBill && activeSale.gstBillNumber ? activeSale.gstBillNumber : `#${activeSale.id.slice(-8).toUpperCase()}`;
 
@@ -702,8 +704,11 @@ export const CreateSalePage: React.FC = () => {
         paidAmount: totalPaid,
         oldDueAmount,
         currentBillAmount: activeSale.totalAmount,
-        grandTotalAmount: grandTotalPayable,
+        currentBillDueAmount: currentBillDue,
+        totalOutstanding,
+        grandTotalAmount: totalOutstanding,
         paidStatus,
+        paymentType: activeSale.paymentType,
         notes: activeSale.notes,
         footerReference: activeSale.isGstBill && activeSale.gstBillNumber ? activeSale.gstBillNumber : activeSale.id,
       };
@@ -728,10 +733,12 @@ export const CreateSalePage: React.FC = () => {
       const activeCustomer = snapshot?.customer || customer;
       const activeLocation = snapshot?.location || location;
       const activeItems = snapshot?.items || items;
-      const totalPaid = snapshot?.paidAmount ?? (activeSale.paymentType === 'credit' ? activeSale.paidAmount : activeSale.totalAmount);
-      const oldDueAmount = snapshot?.oldDueAmount ?? 0;
-      const grandTotalPayable = snapshot?.grandTotalPayable ?? (oldDueAmount + activeSale.totalAmount);
-      const paidStatus = snapshot?.paidStatus ?? (Math.max(0, activeSale.totalAmount - totalPaid) <= 0.001 ? 'PAID' : (totalPaid > 0.001 ? 'PARTIALLY PAID' : 'UNPAID'));
+      const oldDueAmount = snapshot?.oldDueAmount ?? (activeSale.previousDueAmount ?? 0);
+      const totalPaid = snapshot?.paidAmount ?? (activeSale.paymentType === 'credit' ? (activeSale.paidAmount || 0) : activeSale.totalAmount);
+      const currentBillDue = snapshot?.currentBillDueAmount ?? Math.max(0, activeSale.totalAmount - totalPaid);
+      const totalOutstanding = snapshot?.totalOutstanding ?? (oldDueAmount + currentBillDue);
+      const grandTotalPayable = totalOutstanding;
+      const paidStatus = snapshot?.paidStatus ?? (currentBillDue <= 0.001 ? 'PAID' : (totalPaid > 0.001 ? 'PARTIALLY PAID' : 'UNPAID'));
 
       const customInvoiceNumber = activeSale.isGstBill && activeSale.gstBillNumber ? activeSale.gstBillNumber : `#${activeSale.id.slice(-8).toUpperCase()}`;
 
@@ -790,8 +797,11 @@ export const CreateSalePage: React.FC = () => {
         paidAmount: totalPaid,
         oldDueAmount,
         currentBillAmount: activeSale.totalAmount,
-        grandTotalAmount: grandTotalPayable,
+        currentBillDueAmount: currentBillDue,
+        totalOutstanding,
+        grandTotalAmount: totalOutstanding,
         paidStatus,
+        paymentType: activeSale.paymentType,
         notes: activeSale.notes,
         footerReference: activeSale.isGstBill && activeSale.gstBillNumber ? activeSale.gstBillNumber : activeSale.id,
       };

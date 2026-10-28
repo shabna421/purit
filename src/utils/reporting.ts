@@ -38,8 +38,11 @@ export interface InvoicePdfData {
   paidAmount?: number;
   oldDueAmount?: number;
   currentBillAmount?: number;
+  currentBillDueAmount?: number;
+  totalOutstanding?: number;
   grandTotalAmount?: number;
   paidStatus?: string;
+  paymentType?: string;
   notes?: string;
   footerReference?: string;
 }
@@ -867,7 +870,7 @@ function buildPremiumInvoicePdfBlob(data: InvoicePdfData) {
   });
 
   // Check if we need a new page for totals and footer
-  if (y < 310) {
+  if (y < 330) {
     finishPage();
     startPage(true);
   }
@@ -924,63 +927,82 @@ function buildPremiumInvoicePdfBlob(data: InvoicePdfData) {
   const gtWidth = estimatePdfTextWidth(gtStr, 11);
   commands.push(`BT /F2 11 Tf ${totalsX + totalsWidth - 12 - gtWidth} ${gtY + 9} Td (${escapePdfString(gtStr)}) Tj ET`);
 
-  // Payment Summary box:
-  const oldDue = data.oldDueAmount || 0;
-  const currentBill = data.currentBillAmount ?? grandTotal;
-  const grandPayable = data.grandTotalAmount ?? (oldDue + currentBill);
+  // Card 1: Payment Summary Card
+  const card1Height = 56;
+  const card1Y = gtY - 8 - card1Height;
 
-  const psHeight = 108;
-  const psY = gtY - 12 - psHeight;
-  
-  commands.push(`1.0 1.0 1.0 rg ${totalsX} ${psY} ${totalsWidth} ${psHeight} re f`);
-  commands.push(`${borderGray} RG 0.5 w ${totalsX} ${psY} ${totalsWidth} ${psHeight} re S`);
-  
+  commands.push(`1.0 1.0 1.0 rg ${totalsX} ${card1Y} ${totalsWidth} ${card1Height} re f`);
+  commands.push(`${borderGray} RG 0.5 w ${totalsX} ${card1Y} ${totalsWidth} ${card1Height} re S`);
+
+  // Header row: "PAYMENT SUMMARY" with the payment status badge (e.g. "PAID (CASH)")
   commands.push(`${orangeColor} rg`);
-  commands.push(`BT /F2 8 Tf ${totalsX + 12} ${psY + 92} Td (PAYMENT SUMMARY) Tj ET`);
+  commands.push(`BT /F2 8 Tf ${totalsX + 12} ${card1Y + 41} Td (PAYMENT SUMMARY) Tj ET`);
 
-  const psStatusStr = `[${statusTextLabel}]`;
-  const psStatusW = estimatePdfTextWidth(psStatusStr, 8);
+  const paymentType = data.paymentType || data.detailRows.find(r => r.label === 'Payment')?.value;
+  const statusBadgeLabel = paymentType ? `${statusTextLabel} (${paymentType.toUpperCase()})` : statusTextLabel;
+  const psStatusStr = `[${statusBadgeLabel}]`;
+  const sBadgeFontSize = statusBadgeLabel.length > 18 ? 7 : 7.5;
+  const psStatusW = estimatePdfTextWidth(psStatusStr, sBadgeFontSize);
   commands.push(`${sText} rg`);
-  commands.push(`BT /F2 8 Tf ${totalsX + totalsWidth - 12 - psStatusW} ${psY + 92} Td (${escapePdfString(psStatusStr)}) Tj ET`);
+  commands.push(`BT /F2 ${sBadgeFontSize} Tf ${totalsX + totalsWidth - 12 - psStatusW} ${card1Y + 41} Td (${escapePdfString(psStatusStr)}) Tj ET`);
 
+  // Row 1: "Paid Amount" with value
   commands.push(`${textMuted} rg`);
-  commands.push(`BT /F1 8.5 Tf ${totalsX + 12} ${psY + 76} Td (Paid Amount) Tj ET`);
+  commands.push(`BT /F1 8.5 Tf ${totalsX + 12} ${card1Y + 25} Td (Paid Amount) Tj ET`);
   const paidStr = toAsciiCurrency(paidVal, currencyCode);
   const paidWidth = estimatePdfTextWidth(paidStr, 8.5);
-  commands.push(`BT /F1 8.5 Tf ${totalsX + totalsWidth - 12 - paidWidth} ${psY + 76} Td (${escapePdfString(paidStr)}) Tj ET`);
+  commands.push(`BT /F1 8.5 Tf ${totalsX + totalsWidth - 12 - paidWidth} ${card1Y + 25} Td (${escapePdfString(paidStr)}) Tj ET`);
 
+  // Row 2: "Balance Due" with value
   commands.push(`${orangeColor} rg`);
-  commands.push(`BT /F2 9 Tf ${totalsX + 12} ${psY + 61} Td (Balance Due) Tj ET`);
+  commands.push(`BT /F2 9 Tf ${totalsX + 12} ${card1Y + 10} Td (Balance Due) Tj ET`);
   const balStr = toAsciiCurrency(balDue, currencyCode);
   const balWidth = estimatePdfTextWidth(balStr, 9);
-  commands.push(`BT /F2 9 Tf ${totalsX + totalsWidth - 12 - balWidth} ${psY + 61} Td (${escapePdfString(balStr)}) Tj ET`);
+  commands.push(`BT /F2 9 Tf ${totalsX + totalsWidth - 12 - balWidth} ${card1Y + 10} Td (${escapePdfString(balStr)}) Tj ET`);
 
-  commands.push(`${borderSubtle} RG 0.5 w ${totalsX + 12} ${psY + 53} m ${totalsX + totalsWidth - 12} ${psY + 53} l S`);
+  // Card 2: Total Current Outstanding Card (Separate new card below Card 1)
+  const oldDue = data.oldDueAmount || 0;
+  const currentBillDue = data.currentBillDueAmount ?? balDue;
+  const totalOutstanding = data.totalOutstanding ?? (oldDue + currentBillDue);
 
+  const card2Height = 68;
+  const card2Y = card1Y - 8 - card2Height;
+
+  commands.push(`1.0 1.0 1.0 rg ${totalsX} ${card2Y} ${totalsWidth} ${card2Height} re f`);
+  commands.push(`${borderGray} RG 0.5 w ${totalsX} ${card2Y} ${totalsWidth} ${card2Height} re S`);
+
+  // Subtle section heading at the top: "TOTAL CURRENT OUTSTANDING" (uppercase, muted/compact font)
   commands.push(`${textLight} rg`);
-  commands.push(`BT /F1 8 Tf ${totalsX + 12} ${psY + 39} Td (Old Due Amount) Tj ET`);
+  commands.push(`BT /F2 7 Tf ${totalsX + 12} ${card2Y + 52} Td (TOTAL CURRENT OUTSTANDING) Tj ET`);
+
+  // Row 1: "Old Due Amount" with previous due value
+  commands.push(`${textMuted} rg`);
+  commands.push(`BT /F1 8 Tf ${totalsX + 12} ${card2Y + 38} Td (Old Due Amount) Tj ET`);
   const oldDueStr = toAsciiCurrency(oldDue, currencyCode);
   const oldDueWidth = estimatePdfTextWidth(oldDueStr, 8);
-  commands.push(`BT /F1 8 Tf ${totalsX + totalsWidth - 12 - oldDueWidth} ${psY + 39} Td (${escapePdfString(oldDueStr)}) Tj ET`);
+  commands.push(`BT /F1 8 Tf ${totalsX + totalsWidth - 12 - oldDueWidth} ${card2Y + 38} Td (${escapePdfString(oldDueStr)}) Tj ET`);
 
-  commands.push(`BT /F1 8 Tf ${totalsX + 12} ${psY + 27} Td (Current Bill Amount) Tj ET`);
-  const curBillStr = toAsciiCurrency(currentBill, currencyCode);
-  const curBillWidth = estimatePdfTextWidth(curBillStr, 8);
-  commands.push(`BT /F1 8 Tf ${totalsX + totalsWidth - 12 - curBillWidth} ${psY + 27} Td (${escapePdfString(curBillStr)}) Tj ET`);
+  // Row 2: Rename "Current Bill Amount" to strictly "Current Bill Due Amount" with the due amount from this specific bill
+  commands.push(`BT /F1 8 Tf ${totalsX + 12} ${card2Y + 25} Td (Current Bill Due Amount) Tj ET`);
+  const curBillDueStr = toAsciiCurrency(currentBillDue, currencyCode);
+  const curBillDueWidth = estimatePdfTextWidth(curBillDueStr, 8);
+  commands.push(`BT /F1 8 Tf ${totalsX + totalsWidth - 12 - curBillDueWidth} ${card2Y + 25} Td (${escapePdfString(curBillDueStr)}) Tj ET`);
 
-  commands.push(`${borderSubtle} RG 0.5 w ${totalsX + 12} ${psY + 19} m ${totalsX + totalsWidth - 12} ${psY + 19} l S`);
+  // Divider line before Row 3
+  commands.push(`${borderSubtle} RG 0.5 w ${totalsX + 12} ${card2Y + 18} m ${totalsX + totalsWidth - 12} ${card2Y + 18} l S`);
 
+  // Row 3 (Bottom highlighted row): Rename "Grand Total" to strictly "Total Outstanding" showing the final combined outstanding balance
   commands.push(`${textDark} rg`);
-  commands.push(`BT /F2 9 Tf ${totalsX + 12} ${psY + 7} Td (Grand Total) Tj ET`);
-  const gpStr = toAsciiCurrency(grandPayable, currencyCode);
-  const gpWidth = estimatePdfTextWidth(gpStr, 9);
-  commands.push(`BT /F2 9 Tf ${totalsX + totalsWidth - 12 - gpWidth} ${psY + 7} Td (${escapePdfString(gpStr)}) Tj ET`);
+  commands.push(`BT /F2 9 Tf ${totalsX + 12} ${card2Y + 7} Td (Total Outstanding) Tj ET`);
+  const toStr = toAsciiCurrency(totalOutstanding, currencyCode);
+  const toWidth = estimatePdfTextWidth(toStr, 9);
+  commands.push(`BT /F2 9 Tf ${totalsX + totalsWidth - 12 - toWidth} ${card2Y + 7} Td (${escapePdfString(toStr)}) Tj ET`);
 
   // Full-width Amount in Words box below Payment Summary
   const wordsBoxWidth = pageWidth - margin * 2;
   const wordsBoxHeight = 34;
   const wordsBoxX = margin;
-  const wordsBoxY = psY - 14 - wordsBoxHeight;
+  const wordsBoxY = card2Y - 12 - wordsBoxHeight;
 
   commands.push(`${orangeLightBg} rg ${wordsBoxX} ${wordsBoxY} ${wordsBoxWidth} ${wordsBoxHeight} re f`);
   commands.push(`${orangeLightBorder} RG 0.75 w ${wordsBoxX} ${wordsBoxY} ${wordsBoxWidth} ${wordsBoxHeight} re S`);
@@ -1004,7 +1026,7 @@ function buildPremiumInvoicePdfBlob(data: InvoicePdfData) {
   commands.push(`BT /F2 8.5 Tf ${labelX} ${wordsBoxY + 13} Td (${labelText}) Tj ET`);
 
   commands.push(`${textDark} rg`);
-  const wordsText = pdfNumberToWords(grandPayable);
+  const wordsText = pdfNumberToWords(totalOutstanding > 0 ? totalOutstanding : grandTotal);
   const maxTextWidth = wordsBoxWidth - 32 - labelWidth - 12;
   const wordsWrapped = wrapPdfText(wordsText, maxTextWidth, 8.5);
 

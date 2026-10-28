@@ -224,8 +224,11 @@ export const InvoicePage: React.FC = () => {
       paidAmount: paidAmount,
       oldDueAmount: oldDueAmount,
       currentBillAmount: totalAmount,
-      grandTotalAmount: grandTotalPayable,
+      currentBillDueAmount: dueAmount,
+      totalOutstanding: oldDueAmount + dueAmount,
+      grandTotalAmount: oldDueAmount + dueAmount,
       paidStatus: paidStatus,
+      paymentType: freshSale.paymentType,
       notes: freshSale.notes,
       footerReference: freshSale.isGstBill && freshSale.gstBillNumber ? freshSale.gstBillNumber : freshSale.id,
     };
@@ -297,12 +300,15 @@ export const InvoicePage: React.FC = () => {
   const cgstAmount = taxAmount / 2;
   const sgstAmount = taxAmount / 2;
   const subtotal = sale.totalAmount - taxAmount;
-  const paidAmount = snapshot ? snapshot.paidAmount : (sale.paymentType === 'credit' ? sale.paidAmount : sale.totalAmount);
-  const balanceDue = snapshot ? snapshot.dueAmount : Math.max(sale.totalAmount - paidAmount, 0);
-  const oldDueAmount = snapshot ? snapshot.oldDueAmount : 0;
-  const grandTotalPayable = snapshot ? snapshot.grandTotalPayable : (oldDueAmount + sale.totalAmount);
-  const paidStatus = snapshot ? snapshot.paidStatus : (balanceDue <= 0.001 ? 'PAID' : (paidAmount > 0.001 ? 'PARTIALLY PAID' : 'UNPAID'));
-  const totalInWords = numberToWords(grandTotalPayable);
+  const paidAmount = snapshot ? snapshot.paidAmount : (sale.paymentType === 'credit' ? (sale.paidAmount || 0) : sale.totalAmount);
+  const currentBillDueAmount = snapshot ? snapshot.currentBillDueAmount : Math.max(sale.totalAmount - paidAmount, 0);
+  const balanceDue = currentBillDueAmount;
+  const oldDueAmount = snapshot ? snapshot.oldDueAmount : (sale.previousDueAmount ?? 0);
+  const totalOutstanding = snapshot ? snapshot.totalOutstanding : (oldDueAmount + currentBillDueAmount);
+  const grandTotalPayable = totalOutstanding;
+  const paidStatus = snapshot ? snapshot.paidStatus : (currentBillDueAmount <= 0.001 ? 'PAID' : (paidAmount > 0.001 ? 'PARTIALLY PAID' : 'UNPAID'));
+  const totalInWords = numberToWords(totalOutstanding > 0 ? totalOutstanding : sale.totalAmount);
+  const paymentBadgeText = sale.paymentType ? `${paidStatus} (${sale.paymentType.toUpperCase()})` : paidStatus;
 
   return (
     <div className="max-w-5xl mx-auto">
@@ -564,7 +570,7 @@ export const InvoicePage: React.FC = () => {
                 <span className="text-sm font-bold font-mono">INR {sale.totalAmount.toFixed(2)}</span>
               </div>
 
-              {/* Payment Summary Box */}
+              {/* Card 1: Payment Summary Card */}
               <div className="border border-gray-100 rounded-xl p-4 bg-white shadow-sm space-y-2.5 text-xs">
                 <div className="flex justify-between items-center mb-1">
                   <p className="font-bold text-orange-600 uppercase tracking-widest text-[9px]">PAYMENT SUMMARY</p>
@@ -575,7 +581,7 @@ export const InvoicePage: React.FC = () => {
                         ? 'bg-amber-100 text-amber-700'
                         : 'bg-rose-100 text-rose-700'
                   }`}>
-                    {paidStatus}
+                    {paymentBadgeText}
                   </span>
                 </div>
                 <div className="flex justify-between text-gray-600">
@@ -586,18 +592,22 @@ export const InvoicePage: React.FC = () => {
                   <span>Balance Due</span>
                   <span className="font-mono">INR {balanceDue.toFixed(2)}</span>
                 </div>
-                <hr className="border-gray-50 my-1" />
-                <div className="flex justify-between text-gray-400 text-[10px]">
+              </div>
+
+              {/* Card 2: Total Current Outstanding Card */}
+              <div className="border border-gray-100 rounded-xl p-4 bg-white shadow-sm space-y-2.5 text-xs">
+                <p className="font-semibold text-gray-400 uppercase tracking-widest text-[9px]">TOTAL CURRENT OUTSTANDING</p>
+                <div className="flex justify-between text-gray-600">
                   <span>Old Due Amount</span>
                   <span className="font-mono">INR {oldDueAmount.toFixed(2)}</span>
                 </div>
-                <div className="flex justify-between text-gray-400 text-[10px]">
-                  <span>Current Bill Amount</span>
-                  <span className="font-mono">INR {sale.totalAmount.toFixed(2)}</span>
+                <div className="flex justify-between text-gray-600">
+                  <span>Current Bill Due Amount</span>
+                  <span className="font-mono">INR {currentBillDueAmount.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between font-bold text-gray-900 border-t border-gray-100 pt-2 mt-1">
-                  <span>Grand Total</span>
-                  <span className="font-mono">INR {grandTotalPayable.toFixed(2)}</span>
+                  <span>Total Outstanding</span>
+                  <span className="font-mono">INR {totalOutstanding.toFixed(2)}</span>
                 </div>
               </div>
             </div>

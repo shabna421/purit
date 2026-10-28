@@ -22,7 +22,7 @@ export interface DispenserRecord {
   createdAt: number;
 }
 
-const DEFAULT_DISPENSERS: DispenserRecord[] = [
+export const DEFAULT_DISPENSERS: DispenserRecord[] = [
   {
     id: 'disp-1',
     itemName: 'Tissue Dispenser (TD)',
@@ -112,6 +112,7 @@ export default function DispensersPage() {
     setDispensers(data);
     try {
       localStorage.setItem(storageKey, JSON.stringify(data));
+      window.dispatchEvent(new CustomEvent('purit_dispensers_updated', { detail: data }));
     } catch (e) {
       console.error('Failed to save dispensers to localStorage:', e);
     }

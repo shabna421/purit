@@ -24,6 +24,8 @@ export interface RealtimeInvoiceSnapshot {
   paidAmount: number;
   dueAmount: number;
   oldDueAmount: number;
+  currentBillDueAmount: number;
+  totalOutstanding: number;
   grandTotalPayable: number;
   paidStatus: 'PAID' | 'PARTIALLY PAID' | 'UNPAID';
 }
@@ -1257,90 +1259,55 @@ export const saleService = {
       dueAmount = roundCurrencyAmount(Math.max(0, totalAmount - paidAmount));
       oldDueAmount = 0;
     } else {
-      const currentCustomerBalance = roundCurrencyAmount(Math.max(0, freshCustomer.balance || 0));
+      // 1. Old Due Amount (X): Customer's previous pending balance strictly before this current invoice was created/added
+      if (freshSale.previousDueAmount !== undefined && freshSale.previousDueAmount !== null) {
+        oldDueAmount = roundCurrencyAmount(Math.max(0, freshSale.previousDueAmount));
+      } else {
+        // Fallback: Calculate pending balance strictly before this sale was created
+        const priorSales = customerSales.filter(
+          (s) => s.id !== freshSale.id && (s.timestamp < freshSale.timestamp || (s.timestamp === freshSale.timestamp && s.id < freshSale.id))
+        );
+        let priorDebts = 0;
+        priorSales.forEach((s) => {
+          if (s.paymentType !== 'cash') {
+            const initialPaid = s.paidAmount || 0;
+            priorDebts += Math.max(0, s.totalAmount - initialPaid);
+          }
+        });
 
+        const priorPayments = allRelevantPayments
+          .filter((p) => p.timestamp < freshSale.timestamp && (p.direction === 'payment_received' || p.direction === 'write_off' || p.direction === 'return_refund'))
+          .reduce((sum, p) => sum + p.amount, 0);
+
+        const priorBalanceAdded = allRelevantPayments
+          .filter((p) => p.direction === 'balance_added' && p.timestamp < freshSale.timestamp)
+          .reduce((sum, p) => sum + p.amount, 0);
+
+        const priorReturns = customerReturns
+          .filter((r) => r.timestamp < freshSale.timestamp)
+          .reduce((sum, r) => sum + r.totalAmount, 0);
+
+        oldDueAmount = roundCurrencyAmount(Math.max(0, priorDebts + priorBalanceAdded - priorPayments - priorReturns));
+      }
+
+      // 2. Current Bill Due Amount (Y): Unpaid balance of this current bill only
+      // Current Bill Due Amount = (Current Invoice Grand Total - Amount Paid for this Invoice)
       if (freshSale.paymentType === 'cash') {
         paidAmount = totalAmount;
         dueAmount = 0;
-        oldDueAmount = currentCustomerBalance;
       } else {
-        // Credit sale: Always recalculate in real-time from database payment data
-        if (currentCustomerBalance <= 0) {
-          // If customer has no outstanding balance at all, everything is settled!
-          paidAmount = totalAmount;
-          dueAmount = 0;
-          oldDueAmount = 0;
-        } else {
-          // Map direct payments on other sales
-          const otherSaleDirectPayments = new Map<string, number>();
-          allRelevantPayments
-            .filter((p) => p.referenceId && p.referenceId !== freshSale.id && p.direction === 'payment_received')
-            .forEach((p) => {
-              otherSaleDirectPayments.set(p.referenceId!, (otherSaleDirectPayments.get(p.referenceId!) || 0) + p.amount);
-            });
-
-          // Debts from earlier sales or manual due additions prior to this sale
-          const priorSales = customerSales.filter(
-            (s) => s.id !== freshSale.id && (s.timestamp < freshSale.timestamp || (s.timestamp === freshSale.timestamp && s.id < freshSale.id))
-          );
-          let priorDebts = 0;
-          priorSales.forEach((s) => {
-            if (s.paymentType !== 'cash') {
-              const initialPaid = s.paidAmount || 0;
-              const directPaid = otherSaleDirectPayments.get(s.id) || 0;
-              const netOwed = Math.max(0, s.totalAmount - Math.max(initialPaid, directPaid));
-              priorDebts += netOwed;
-            }
-          });
-
-          allRelevantPayments
-            .filter((p) => p.direction === 'balance_added' && p.timestamp < freshSale.timestamp)
-            .forEach((p) => {
-              priorDebts += p.amount;
-            });
-
-          // Initial debt of this sale
-          const basePaid = Math.max(0, freshSale.paidAmount || 0);
-          const thisSaleInitialDebt = Math.max(0, totalAmount - Math.max(basePaid, directPaymentsReceived));
-
-          // General customer payments and credits available to clear debt
-          let availableGeneralPayments = allRelevantPayments
-            .filter((p) => (
-              (p.direction === 'payment_received' && (!p.referenceId || p.referenceId === freshCustomer.id)) ||
-              p.direction === 'write_off' ||
-              p.direction === 'return_refund'
-            ))
-            .reduce((sum, p) => sum + p.amount, 0);
-
-          customerReturns.forEach((r) => {
-            availableGeneralPayments += r.totalAmount;
-          });
-
-          // Apply general payments FIFO
-          const generalToPrior = Math.min(priorDebts, availableGeneralPayments);
-          const remainingPriorDebt = priorDebts - generalToPrior;
-          const generalRemaining = availableGeneralPayments - generalToPrior;
-
-          const generalToThisSale = Math.min(thisSaleInitialDebt, generalRemaining);
-          const remainingThisSaleDebt = thisSaleInitialDebt - generalToThisSale;
-
-          dueAmount = roundCurrencyAmount(remainingThisSaleDebt);
-          paidAmount = roundCurrencyAmount(Math.min(totalAmount, totalAmount - dueAmount));
-          oldDueAmount = roundCurrencyAmount(remainingPriorDebt);
-
-          // Reconcile with latest customer balance from DB
-          if (dueAmount > currentCustomerBalance) {
-            dueAmount = currentCustomerBalance;
-            paidAmount = roundCurrencyAmount(Math.max(0, totalAmount - dueAmount));
-            oldDueAmount = 0;
-          } else if (oldDueAmount + dueAmount > currentCustomerBalance) {
-            oldDueAmount = roundCurrencyAmount(Math.max(0, currentCustomerBalance - dueAmount));
-          }
-        }
+        const basePaid = freshSale.paidAmount || 0;
+        paidAmount = roundCurrencyAmount(
+          Math.min(totalAmount, Math.max(basePaid, basePaid + directPaymentsReceived, directPaymentsReceived))
+        );
+        dueAmount = roundCurrencyAmount(Math.max(0, totalAmount - paidAmount));
       }
     }
 
-    const grandTotalPayable = roundCurrencyAmount(oldDueAmount + totalAmount);
+    // 3. Total Outstanding (X + Y): Calculate the sum of Old Due Amount and Current Bill Due Amount
+    const currentBillDueAmount = dueAmount;
+    const totalOutstanding = roundCurrencyAmount(oldDueAmount + currentBillDueAmount);
+    const grandTotalPayable = totalOutstanding;
     const paidStatus = dueAmount <= 0.001 ? 'PAID' : (paidAmount > 0.001 ? 'PARTIALLY PAID' : 'UNPAID');
 
     // Keep sales table paidAmount synced with real-time payment calculations
@@ -1367,6 +1334,8 @@ export const saleService = {
       paidAmount,
       dueAmount,
       oldDueAmount,
+      currentBillDueAmount,
+      totalOutstanding,
       grandTotalPayable,
       paidStatus,
     };

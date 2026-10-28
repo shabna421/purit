@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useTenancy } from '../contexts';
 import { useAuth } from '../contexts';
@@ -18,6 +18,7 @@ import { formatCurrency } from '../utils/currency';
 import { formatNumericInput, parseNumericInput } from '../utils/numbers';
 import { CustomerLedgerModal } from '../components/CustomerLedgerModal';
 import SuperDeleteConfirmModal from '../components/SuperDeleteConfirmModal';
+import { DispenserRecord, DEFAULT_DISPENSERS } from './DispensersPage';
 
 function formatReference(referenceId?: string) {
   if (!referenceId) return '-';
@@ -58,7 +59,8 @@ export default function CustomersPage() {
   const { currentOrg } = useTenancy();
   const { user } = useAuth();
   const { success, error: notifyError } = useNotifications();
-  const { customers, loading, sales } = useRealtimeData();
+  const { customers, loading, sales, items } = useRealtimeData();
+  const productCatalogMap = useMemo(() => new Map((items || []).map((i) => [i.id, i])), [items]);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
 
@@ -73,6 +75,36 @@ export default function CustomersPage() {
       return () => document.removeEventListener('click', handleClickOutside);
     }
   }, [activeMenuId]);
+  const dispStorageKey = `purit_dispensers_${currentOrg?.id || 'default'}`;
+  const [dispenserRecords, setDispenserRecords] = useState<DispenserRecord[]>(() => {
+    try {
+      const saved = localStorage.getItem(dispStorageKey);
+      if (saved) return JSON.parse(saved);
+      return DEFAULT_DISPENSERS;
+    } catch {
+      return DEFAULT_DISPENSERS;
+    }
+  });
+
+  useEffect(() => {
+    const handleSync = (e: any) => {
+      if (e?.detail) {
+        setDispenserRecords(e.detail);
+      } else {
+        try {
+          const saved = localStorage.getItem(dispStorageKey);
+          if (saved) setDispenserRecords(JSON.parse(saved));
+        } catch {}
+      }
+    };
+    window.addEventListener('purit_dispensers_updated', handleSync);
+    window.addEventListener('storage', handleSync);
+    return () => {
+      window.removeEventListener('purit_dispensers_updated', handleSync);
+      window.removeEventListener('storage', handleSync);
+    };
+  }, [dispStorageKey]);
+
   const [dispensers, setDispensers] = useState<Record<string, { td: number; fhb: number }>>(() => {
     try {
       const saved = localStorage.getItem('purit_customer_dispensers');
@@ -83,7 +115,33 @@ export default function CustomersPage() {
   });
 
   const updateDispenser = (customerId: string, type: 'td' | 'fhb', delta: number) => {
-    const current = dispensers[customerId] || { td: 3, fhb: 2 };
+    const cust = customers.find((c) => c.id === customerId);
+    const isKattan = cust?.name?.toLowerCase().includes('kattan') || cust?.shopName?.toLowerCase().includes('kattan');
+    
+    // Find customer's assigned records in dispenserRecords
+    const assigned = dispenserRecords.filter((d) => {
+      if (d.customerId && d.customerId === customerId) return true;
+      if (!d.customerName || !cust) return false;
+      const target = d.customerName.toLowerCase().trim();
+      const cName = cust.name.toLowerCase().trim();
+      const sName = (cust.shopName || '').toLowerCase().trim();
+      return target === cName || (sName && target === sName) || cName.includes(target) || target.includes(cName);
+    });
+
+    const custTd = assigned.find((d) => {
+      const n = d.itemName.toLowerCase();
+      return n.includes('td') || n.includes('tissue');
+    });
+    const custFhb = assigned.find((d) => {
+      const n = d.itemName.toLowerCase();
+      return n.includes('fhb') || n.includes('foam');
+    });
+
+    const defaultTd = custTd?.quantity ?? (isKattan ? 3 : 0);
+    const defaultFhb = custFhb?.quantity ?? (isKattan ? 2 : 0);
+    const defaultForCust = { td: defaultTd, fhb: defaultFhb };
+
+    const current = dispensers[customerId] || defaultForCust;
     const currentCount = current[type] ?? 0;
     if (delta < 0 && currentCount <= 0) return;
 
@@ -93,12 +151,12 @@ export default function CustomersPage() {
 
     // Pure state updater
     setDispensers((prev) => {
-      const prevCustomer = prev[customerId] || { td: 3, fhb: 2 };
+      const prevCustomer = prev[customerId] || defaultForCust;
       return {
         ...prev,
         [customerId]: {
           ...prevCustomer,
-          [type]: Math.max(0, (prevCustomer[type] ?? 0) + delta),
+          [type]: newCount,
         },
       };
     });
@@ -116,87 +174,56 @@ export default function CustomersPage() {
       console.error(e);
     }
 
-    // Automatically sync and decrease/increase inventory in the Dispenser space (runs strictly once per click)
-    const dispStorageKey = `purit_dispensers_${currentOrg?.id || 'default'}`;
+    // Sync with purit_dispensers localStorage list
     try {
       const rawDisp = localStorage.getItem(dispStorageKey);
-      let dispList: any[] = rawDisp ? JSON.parse(rawDisp) : [];
+      let dispList: DispenserRecord[] = rawDisp ? JSON.parse(rawDisp) : [...dispenserRecords];
 
-      // If list is empty, initialize with default stock items
-      if (!dispList || dispList.length === 0) {
-        dispList = [
-          {
-            id: 'disp-1',
-            itemName: 'Tissue Dispenser (TD)',
-            quantity: 10,
-            unitPrice: 2000,
-            totalAmount: 20000,
-            date: new Date().toISOString().split('T')[0],
-            createdAt: Date.now() - 86400000,
-            notes: 'General stock inventory',
-          },
-          {
-            id: 'disp-2',
-            itemName: 'Foam Hand Wash Dispenser (FHB)',
-            quantity: 10,
-            unitPrice: 3000,
-            totalAmount: 30000,
-            date: new Date().toISOString().split('T')[0],
-            createdAt: Date.now() - 86400000,
-            notes: 'General stock inventory',
-          },
-        ];
-      }
+      // Match the customer's dispenser record if it exists
+      const targetCustIndex = dispList.findIndex((d) => {
+        const matchesCust = (d.customerId && d.customerId === customerId) ||
+          (cust && d.customerName && (
+            d.customerName.toLowerCase().includes(cust.name.toLowerCase()) ||
+            cust.name.toLowerCase().includes(d.customerName.toLowerCase())
+          ));
+        if (!matchesCust) return false;
+        const n = d.itemName.toLowerCase();
+        return type === 'td' ? (n.includes('td') || n.includes('tissue')) : (n.includes('fhb') || n.includes('foam'));
+      });
 
-      // Find the matching dispenser item in inventory
-      const keyword = type === 'td' ? 'td' : 'fhb';
-      const altKeyword = type === 'td' ? 'tissue' : 'foam';
-
-      let targetIndex = dispList.findIndex(
-        (d) =>
-          !d.customerId &&
-          (d.itemName.toLowerCase().includes(keyword) || d.itemName.toLowerCase().includes(altKeyword))
-      );
-
-      if (targetIndex === -1) {
-        targetIndex = dispList.findIndex(
-          (d) =>
-            d.itemName.toLowerCase().includes(keyword) || d.itemName.toLowerCase().includes(altKeyword)
-        );
-      }
-
-      if (targetIndex !== -1) {
-        const target = dispList[targetIndex];
-        // When actualDelta is +1, inventory stock DECREASES by 1
-        // When actualDelta is -1, inventory stock INCREASES by 1
-        const newQty = Math.max(0, (target.quantity || 0) - actualDelta);
-        const price = target.unitPrice || (type === 'td' ? 2000 : 3000);
-        dispList[targetIndex] = {
+      if (targetCustIndex !== -1) {
+        const target = dispList[targetCustIndex];
+        const unitPrice = target.unitPrice || (type === 'td' ? 2000 : 3000);
+        dispList[targetCustIndex] = {
           ...target,
-          quantity: newQty,
-          totalAmount: newQty * price,
+          quantity: newCount,
+          totalAmount: newCount * unitPrice,
         };
       } else {
-        // If no matching stock item exists yet, create one
-        const initialStock = type === 'td' ? 10 : 8;
-        const newQty = Math.max(0, initialStock - actualDelta);
-        const price = type === 'td' ? 2000 : 3000;
+        // If customer doesn't have a specific record yet, create one
+        const generalItem = dispList.find((d) => {
+          const n = d.itemName.toLowerCase();
+          return type === 'td' ? (n.includes('td') || n.includes('tissue')) : (n.includes('fhb') || n.includes('foam'));
+        });
+        const unitPrice = generalItem?.unitPrice || (type === 'td' ? 2000 : 3000);
         dispList.push({
           id: `disp-${Date.now()}`,
           itemName: type === 'td' ? 'Tissue Dispenser (TD)' : 'Foam Hand Wash Dispenser (FHB)',
-          quantity: newQty,
-          unitPrice: price,
-          totalAmount: newQty * price,
+          quantity: newCount,
+          unitPrice,
+          totalAmount: newCount * unitPrice,
+          customerId: customerId,
+          customerName: cust ? (cust.shopName ? `${cust.name} (${cust.shopName})` : cust.name) : undefined,
           date: new Date().toISOString().split('T')[0],
           createdAt: Date.now(),
-          notes: 'Stock inventory',
         });
       }
 
       localStorage.setItem(dispStorageKey, JSON.stringify(dispList));
+      setDispenserRecords(dispList);
       window.dispatchEvent(new CustomEvent('purit_dispensers_updated', { detail: dispList }));
     } catch (err) {
-      console.error('Failed to sync dispenser inventory stock:', err);
+      console.error('Failed to sync dispenser records:', err);
     }
   };
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -419,21 +446,86 @@ export default function CustomersPage() {
             const realCollected = custSales.reduce((sum, s) => sum + (s.paidAmount || 0), 0);
             const dueVal = customer.balance || 0;
 
-            let totalSalesVal = realTotalSales;
-            let collectedVal = realCollected;
+            const totalSalesVal = realTotalSales;
+            const collectedVal = Math.max(realCollected, Math.max(0, totalSalesVal - dueVal));
 
-            if (totalSalesVal === 0 && dueVal > 0) {
-              totalSalesVal = Math.round(dueVal * 3.6834);
-              collectedVal = totalSalesVal - dueVal;
-            } else if (totalSalesVal === 0 && dueVal === 0) {
-              totalSalesVal = 0;
-              collectedVal = 0;
-            }
+            // Find all dispenser records assigned to this customer in Dispensers inventory
+            const custDispensers = dispenserRecords.filter((d) => {
+              if (d.customerId && d.customerId === customer.id) return true;
+              if (!d.customerName) return false;
+              const target = d.customerName.toLowerCase().trim();
+              const cName = customer.name.toLowerCase().trim();
+              const sName = (customer.shopName || '').toLowerCase().trim();
+              return (
+                target === cName ||
+                (sName && target === sName) ||
+                cName.includes(target) ||
+                target.includes(cName) ||
+                (sName && (sName.includes(target) || target.includes(sName)))
+              );
+            });
 
-            const tdCount = dispensers[customer.id]?.td ?? 3;
-            const fhbCount = dispensers[customer.id]?.fhb ?? 2;
-            const dispenserCostVal = tdCount * 2000 + fhbCount * 3000;
-            const profitVal = totalSalesVal > 0 ? Math.round(totalSalesVal * 0.1478) : 0;
+            // Find specific TD / FHB records for this customer
+            const custTdRecord = custDispensers.find((d) => {
+              const n = d.itemName.toLowerCase();
+              return n.includes('td') || n.includes('tissue');
+            });
+            const custFhbRecord = custDispensers.find((d) => {
+              const n = d.itemName.toLowerCase();
+              return n.includes('fhb') || n.includes('foam');
+            });
+
+            // General TD / FHB unit prices from dispenser catalog
+            const generalTdRecord = dispenserRecords.find((d) => {
+              const n = d.itemName.toLowerCase();
+              return n.includes('td') || n.includes('tissue');
+            });
+            const generalFhbRecord = dispenserRecords.find((d) => {
+              const n = d.itemName.toLowerCase();
+              return n.includes('fhb') || n.includes('foam');
+            });
+
+            const tdUnitPrice = custTdRecord?.unitPrice ?? generalTdRecord?.unitPrice ?? 2000;
+            const fhbUnitPrice = custFhbRecord?.unitPrice ?? generalFhbRecord?.unitPrice ?? 3000;
+
+            const isKattan = customer.name?.toLowerCase().includes('kattan') || customer.shopName?.toLowerCase().includes('kattan');
+            const savedDispensers = dispensers[customer.id];
+
+            // Counts: prioritize card state if manually clicked, otherwise assigned dispenser quantity, otherwise default
+            const tdCount = savedDispensers?.td !== undefined
+              ? savedDispensers.td
+              : (custTdRecord?.quantity ?? (isKattan ? 3 : 0));
+
+            const fhbCount = savedDispensers?.fhb !== undefined
+              ? savedDispensers.fhb
+              : (custFhbRecord?.quantity ?? (isKattan ? 2 : 0));
+
+            // Any other dispenser items assigned to this customer
+            const otherDispensersCost = custDispensers
+              .filter((d) => d.id !== custTdRecord?.id && d.id !== custFhbRecord?.id)
+              .reduce((sum, d) => sum + (d.totalAmount ?? ((d.quantity || 0) * (d.unitPrice || 0))), 0);
+
+            // Compute exact dispenser cost using customer records or units * price
+            const tdCost = custTdRecord && custTdRecord.quantity === tdCount
+              ? custTdRecord.totalAmount
+              : tdCount * tdUnitPrice;
+
+            const fhbCost = custFhbRecord && custFhbRecord.quantity === fhbCount
+              ? custFhbRecord.totalAmount
+              : fhbCount * fhbUnitPrice;
+
+            const dispenserCostVal = tdCost + fhbCost + otherDispensersCost;
+
+            let profitVal = 0;
+            custSales.forEach((s) => {
+              (s.items || []).forEach((line) => {
+                const product = productCatalogMap.get(line.itemId);
+                const cost = (product?.basePrice ?? 0) * (line.quantity || 0);
+                const rev = (line.unitPrice ?? 0) * (line.quantity || 0);
+                profitVal += (rev - cost);
+              });
+            });
+
             const netProfitVal = profitVal - dispenserCostVal;
 
             const formatStat = (amount: number) => {
@@ -685,7 +777,7 @@ export default function CustomersPage() {
                           <p className="text-[11px] text-zinc-500 font-medium leading-tight">Dispenser Cost</p>
                         </div>
                         <p className="text-base sm:text-lg md:text-xl font-bold text-zinc-900 tracking-tight mt-1 whitespace-nowrap">
-                          -{formatStat(dispenserCostVal)}
+                          {dispenserCostVal > 0 ? `-${formatStat(dispenserCostVal)}` : formatStat(0)}
                         </p>
                       </div>
                     </div>
