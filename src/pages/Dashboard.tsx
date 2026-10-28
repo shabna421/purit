@@ -460,6 +460,12 @@ export const Dashboard: React.FC = () => {
         end: endOfDay(customRange.end),
       };
     }
+    if (customRange.start && !customRange.end) {
+      return {
+        start: startOfDay(customRange.start),
+        end: endOfDay(customRange.start),
+      };
+    }
 
     switch (periodFilter) {
       case 'today':
@@ -488,7 +494,13 @@ export const Dashboard: React.FC = () => {
 
   const periodLabel = (() => {
     if (customRange.start && customRange.end) {
+      if (isSameDay(customRange.start, customRange.end)) {
+        return format(customRange.start, 'dd MMM');
+      }
       return `${format(customRange.start, 'dd MMM')} - ${format(customRange.end, 'dd MMM')}`;
+    }
+    if (customRange.start && !customRange.end) {
+      return format(customRange.start, 'dd MMM');
     }
 
     switch (periodFilter) {
@@ -530,7 +542,7 @@ export const Dashboard: React.FC = () => {
     : 0;
 
   const getPeriodStatLabel = (prefix: string) => {
-    if (customRange.start && customRange.end) {
+    if (customRange.start) {
       return `${prefix} (${periodLabel})`;
     }
     if (periodFilter === 'today') {
@@ -610,38 +622,17 @@ export const Dashboard: React.FC = () => {
                   type="button"
                   onClick={() => setIsCalendarOpen((prev) => !prev)}
                   className={`inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[11px] font-semibold whitespace-nowrap transition-all ${
-                    customRange.start && customRange.end
+                    customRange.start
                       ? 'border-orange-200 bg-orange-50 text-orange-700 shadow-sm'
                       : 'border-transparent bg-transparent text-zinc-600 hover:bg-white hover:text-zinc-900'
                   }`}
                 >
                   <CalendarRange className="h-3.5 w-3.5" />
-                  <span className="max-w-[6.75rem] truncate sm:max-w-none">
-                    {customRange.start && customRange.end ? periodLabel : 'Date Range'}
+                  <span className="max-w-[7.5rem] truncate sm:max-w-none">
+                    {customRange.start ? periodLabel : 'Date Range'}
                   </span>
                   <ChevronDown className="h-3.5 w-3.5" />
                 </button>
-                {isCalendarOpen && (
-                  <PremiumRangeCalendar
-                    month={calendarMonth}
-                    range={customRange}
-                    onMonthChange={setCalendarMonth}
-                    onSelectDate={(date) => {
-                      if (!customRange.start || (customRange.start && customRange.end)) {
-                        setCustomRange({ start: date, end: null });
-                        return;
-                      }
-
-                      if (date < customRange.start) {
-                        setCustomRange({ start: date, end: customRange.start });
-                      } else {
-                        setCustomRange({ start: customRange.start, end: date });
-                      }
-                    }}
-                    onClear={() => setCustomRange({ start: null, end: null })}
-                    onApply={() => setIsCalendarOpen(false)}
-                  />
-                )}
               </div>
             </div>
           </div>
@@ -881,37 +872,17 @@ export const Dashboard: React.FC = () => {
                       type="button"
                       onClick={() => setIsCalendarOpen((prev) => !prev)}
                       className={`inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[11px] font-semibold whitespace-nowrap transition-all ${
-                        customRange.start && customRange.end
+                        customRange.start
                           ? 'border-orange-200 bg-orange-50 text-orange-700 shadow-sm'
                           : 'border-transparent bg-transparent text-zinc-600 hover:bg-white hover:text-zinc-900'
                       }`}
                     >
                       <CalendarRange className="h-3.5 w-3.5" />
-                      <span className="max-w-[6.75rem] truncate sm:max-w-none">
-                        {customRange.start && customRange.end ? periodLabel : 'Date Range'}
+                      <span className="max-w-[7.5rem] truncate sm:max-w-none">
+                        {customRange.start ? periodLabel : 'Date Range'}
                       </span>
                       <ChevronDown className="h-3.5 w-3.5" />
                     </button>
-                    {isCalendarOpen && (
-                      <PremiumRangeCalendar
-                        month={calendarMonth}
-                        range={customRange}
-                        onMonthChange={setCalendarMonth}
-                        onSelectDate={(date) => {
-                          if (!customRange.start || (customRange.start && customRange.end)) {
-                            setCustomRange({ start: date, end: null });
-                            return;
-                          }
-                          if (date < customRange.start) {
-                            setCustomRange({ start: date, end: customRange.start });
-                          } else {
-                            setCustomRange({ start: customRange.start, end: date });
-                          }
-                        }}
-                        onClear={() => setCustomRange({ start: null, end: null })}
-                        onApply={() => setIsCalendarOpen(false)}
-                      />
-                    )}
                   </div>
                 </div>
               </div>
@@ -1074,6 +1045,64 @@ export const Dashboard: React.FC = () => {
       </header>
 
       {membership?.role === 'owner' || membership?.role === 'admin' ? renderOwnerDashboard() : renderWarehouseDashboard()}
+
+      {/* Date Range Modal */}
+      <AnimatePresence>
+        {isCalendarOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => {
+                if (customRange.start && !customRange.end) {
+                  setCustomRange((prev) => ({ ...prev, end: prev.start }));
+                }
+                setIsCalendarOpen(false);
+              }}
+              className="absolute inset-0 bg-zinc-950/60 backdrop-blur-xs"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+              className="relative z-10 w-full max-w-sm"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <PremiumRangeCalendar
+                month={calendarMonth}
+                range={customRange}
+                onMonthChange={setCalendarMonth}
+                onSelectDate={(date) => {
+                  if (!customRange.start || (customRange.start && customRange.end)) {
+                    setCustomRange({ start: date, end: null });
+                    return;
+                  }
+
+                  if (date < customRange.start) {
+                    setCustomRange({ start: date, end: customRange.start });
+                  } else {
+                    setCustomRange({ start: customRange.start, end: date });
+                  }
+                }}
+                onClear={() => {
+                  setCustomRange({ start: null, end: null });
+                  setPeriodFilter('7d');
+                  setIsCalendarOpen(false);
+                }}
+                onApply={() => {
+                  if (customRange.start && !customRange.end) {
+                    setCustomRange((prev) => ({ ...prev, end: prev.start }));
+                  }
+                  setIsCalendarOpen(false);
+                }}
+                className="w-full overflow-hidden rounded-[1.75rem] border border-zinc-200/80 bg-white shadow-2xl"
+              />
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Cash & Credit Drawer */}
       <AnimatePresence>
