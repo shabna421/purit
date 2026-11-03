@@ -547,28 +547,23 @@ export default function CustomersPage() {
                 className="bg-white border border-zinc-200/90 rounded-[28px] p-6 shadow-sm hover:shadow-md transition-all flex flex-col gap-4 group"
               >
                 {/* Header */}
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex items-start gap-3 min-w-0">
-                    <div className="w-10 h-10 rounded-full bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-500 shrink-0 shadow-2xs">
-                      <User className="w-5 h-5 stroke-[2]" />
+                <div className="flex flex-col gap-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-start gap-3 min-w-0 flex-1">
+                      <div className="w-10 h-10 rounded-full bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-500 shrink-0 shadow-2xs mt-0.5">
+                        <User className="w-5 h-5 stroke-[2]" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <h3 className="text-xl font-bold text-zinc-900 tracking-tight leading-snug break-words">
+                          {customer.name}
+                        </h3>
+                        <p className="text-sm text-zinc-400 font-medium mt-0.5 truncate">
+                          {customer.shopName || 'No Shop Name'}
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <h3 className="text-xl font-bold text-zinc-900 tracking-tight leading-snug">
-                        {customer.name}
-                      </h3>
-                      <p className="text-sm text-zinc-400 font-medium mt-0.5">
-                        {customer.shopName || 'No Shop Name'}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3 shrink-0">
-                    <div className="text-right">
-                      <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider block">BALANCE</span>
-                      <span className={`text-xl font-bold tracking-tight block ${customer.balance > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
-                        {formatCurrency(customer.balance, currentOrg?.settings.currency)}
-                      </span>
-                    </div>
-                    <div className="relative customer-actions-menu">
+
+                    <div className="relative customer-actions-menu shrink-0">
                       <button
                         type="button"
                         onClick={(e) => {
@@ -619,6 +614,18 @@ export default function CustomersPage() {
                         )}
                       </AnimatePresence>
                     </div>
+                  </div>
+
+                  {/* Balance Bar */}
+                  <div className={`flex items-center justify-between px-3.5 py-2 rounded-2xl border ${
+                    customer.balance > 0
+                      ? 'bg-rose-50/40 border-rose-100/70'
+                      : 'bg-zinc-50/80 border-zinc-100'
+                  }`}>
+                    <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">BALANCE</span>
+                    <span className={`text-base sm:text-lg font-bold tracking-tight ${customer.balance > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                      {formatCurrency(customer.balance, currentOrg?.settings.currency)}
+                    </span>
                   </div>
                 </div>
 
