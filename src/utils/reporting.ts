@@ -45,6 +45,7 @@ export interface InvoicePdfData {
   paymentType?: string;
   notes?: string;
   footerReference?: string;
+  includeOldBalance?: boolean;
 }
 
 export interface CustomerLedgerTransaction {
@@ -870,7 +871,9 @@ function buildPremiumInvoicePdfBlob(data: InvoicePdfData) {
   });
 
   // Check if we need a new page for totals and footer
-  if (y < 330) {
+  const includeOldBalance = Boolean(data.includeOldBalance);
+  const neededHeight = includeOldBalance ? 330 : 250;
+  if (y < neededHeight) {
     finishPage();
     startPage(true);
   }
@@ -960,49 +963,54 @@ function buildPremiumInvoicePdfBlob(data: InvoicePdfData) {
   const balWidth = estimatePdfTextWidth(balStr, 9);
   commands.push(`BT /F2 9 Tf ${totalsX + totalsWidth - 12 - balWidth} ${card1Y + 10} Td (${escapePdfString(balStr)}) Tj ET`);
 
-  // Card 2: Total Current Outstanding Card (Separate new card below Card 1)
+  // Card 2: Total Current Outstanding Card (Separate card below Card 1, shown only when includeOldBalance is enabled)
   const oldDue = data.oldDueAmount || 0;
   const currentBillDue = data.currentBillDueAmount ?? balDue;
   const totalOutstanding = data.totalOutstanding ?? (oldDue + currentBillDue);
 
-  const card2Height = 68;
-  const card2Y = card1Y - 8 - card2Height;
+  let bottomCardY = card1Y;
 
-  commands.push(`1.0 1.0 1.0 rg ${totalsX} ${card2Y} ${totalsWidth} ${card2Height} re f`);
-  commands.push(`${borderGray} RG 0.5 w ${totalsX} ${card2Y} ${totalsWidth} ${card2Height} re S`);
+  if (includeOldBalance) {
+    const card2Height = 68;
+    const card2Y = card1Y - 8 - card2Height;
+    bottomCardY = card2Y;
 
-  // Subtle section heading at the top: "TOTAL CURRENT OUTSTANDING" (uppercase, muted/compact font)
-  commands.push(`${textLight} rg`);
-  commands.push(`BT /F2 7 Tf ${totalsX + 12} ${card2Y + 52} Td (TOTAL CURRENT OUTSTANDING) Tj ET`);
+    commands.push(`1.0 1.0 1.0 rg ${totalsX} ${card2Y} ${totalsWidth} ${card2Height} re f`);
+    commands.push(`${borderGray} RG 0.5 w ${totalsX} ${card2Y} ${totalsWidth} ${card2Height} re S`);
 
-  // Row 1: "Old Due Amount" with previous due value
-  commands.push(`${textMuted} rg`);
-  commands.push(`BT /F1 8 Tf ${totalsX + 12} ${card2Y + 38} Td (Old Due Amount) Tj ET`);
-  const oldDueStr = toAsciiCurrency(oldDue, currencyCode);
-  const oldDueWidth = estimatePdfTextWidth(oldDueStr, 8);
-  commands.push(`BT /F1 8 Tf ${totalsX + totalsWidth - 12 - oldDueWidth} ${card2Y + 38} Td (${escapePdfString(oldDueStr)}) Tj ET`);
+    // Subtle section heading at the top: "TOTAL CURRENT OUTSTANDING" (uppercase, muted/compact font)
+    commands.push(`${textLight} rg`);
+    commands.push(`BT /F2 7 Tf ${totalsX + 12} ${card2Y + 52} Td (TOTAL CURRENT OUTSTANDING) Tj ET`);
 
-  // Row 2: Rename "Current Bill Amount" to strictly "Current Bill Due Amount" with the due amount from this specific bill
-  commands.push(`BT /F1 8 Tf ${totalsX + 12} ${card2Y + 25} Td (Current Bill Due Amount) Tj ET`);
-  const curBillDueStr = toAsciiCurrency(currentBillDue, currencyCode);
-  const curBillDueWidth = estimatePdfTextWidth(curBillDueStr, 8);
-  commands.push(`BT /F1 8 Tf ${totalsX + totalsWidth - 12 - curBillDueWidth} ${card2Y + 25} Td (${escapePdfString(curBillDueStr)}) Tj ET`);
+    // Row 1: "Old Due Amount" with previous due value
+    commands.push(`${textMuted} rg`);
+    commands.push(`BT /F1 8 Tf ${totalsX + 12} ${card2Y + 38} Td (Old Due Amount) Tj ET`);
+    const oldDueStr = toAsciiCurrency(oldDue, currencyCode);
+    const oldDueWidth = estimatePdfTextWidth(oldDueStr, 8);
+    commands.push(`BT /F1 8 Tf ${totalsX + totalsWidth - 12 - oldDueWidth} ${card2Y + 38} Td (${escapePdfString(oldDueStr)}) Tj ET`);
 
-  // Divider line before Row 3
-  commands.push(`${borderSubtle} RG 0.5 w ${totalsX + 12} ${card2Y + 18} m ${totalsX + totalsWidth - 12} ${card2Y + 18} l S`);
+    // Row 2: Rename "Current Bill Amount" to strictly "Current Bill Due Amount" with the due amount from this specific bill
+    commands.push(`BT /F1 8 Tf ${totalsX + 12} ${card2Y + 25} Td (Current Bill Due Amount) Tj ET`);
+    const curBillDueStr = toAsciiCurrency(currentBillDue, currencyCode);
+    const curBillDueWidth = estimatePdfTextWidth(curBillDueStr, 8);
+    commands.push(`BT /F1 8 Tf ${totalsX + totalsWidth - 12 - curBillDueWidth} ${card2Y + 25} Td (${escapePdfString(curBillDueStr)}) Tj ET`);
 
-  // Row 3 (Bottom highlighted row): Rename "Grand Total" to strictly "Total Outstanding" showing the final combined outstanding balance
-  commands.push(`${textDark} rg`);
-  commands.push(`BT /F2 9 Tf ${totalsX + 12} ${card2Y + 7} Td (Total Outstanding) Tj ET`);
-  const toStr = toAsciiCurrency(totalOutstanding, currencyCode);
-  const toWidth = estimatePdfTextWidth(toStr, 9);
-  commands.push(`BT /F2 9 Tf ${totalsX + totalsWidth - 12 - toWidth} ${card2Y + 7} Td (${escapePdfString(toStr)}) Tj ET`);
+    // Divider line before Row 3
+    commands.push(`${borderSubtle} RG 0.5 w ${totalsX + 12} ${card2Y + 18} m ${totalsX + totalsWidth - 12} ${card2Y + 18} l S`);
+
+    // Row 3 (Bottom highlighted row): Rename "Grand Total" to strictly "Total Outstanding" showing the final combined outstanding balance
+    commands.push(`${textDark} rg`);
+    commands.push(`BT /F2 9 Tf ${totalsX + 12} ${card2Y + 7} Td (Total Outstanding) Tj ET`);
+    const toStr = toAsciiCurrency(totalOutstanding, currencyCode);
+    const toWidth = estimatePdfTextWidth(toStr, 9);
+    commands.push(`BT /F2 9 Tf ${totalsX + totalsWidth - 12 - toWidth} ${card2Y + 7} Td (${escapePdfString(toStr)}) Tj ET`);
+  }
 
   // Full-width Amount in Words box below Payment Summary
   const wordsBoxWidth = pageWidth - margin * 2;
   const wordsBoxHeight = 34;
   const wordsBoxX = margin;
-  const wordsBoxY = card2Y - 12 - wordsBoxHeight;
+  const wordsBoxY = bottomCardY - 12 - wordsBoxHeight;
 
   commands.push(`${orangeLightBg} rg ${wordsBoxX} ${wordsBoxY} ${wordsBoxWidth} ${wordsBoxHeight} re f`);
   commands.push(`${orangeLightBorder} RG 0.75 w ${wordsBoxX} ${wordsBoxY} ${wordsBoxWidth} ${wordsBoxHeight} re S`);
@@ -1026,7 +1034,10 @@ function buildPremiumInvoicePdfBlob(data: InvoicePdfData) {
   commands.push(`BT /F2 8.5 Tf ${labelX} ${wordsBoxY + 13} Td (${labelText}) Tj ET`);
 
   commands.push(`${textDark} rg`);
-  const wordsText = pdfNumberToWords(totalOutstanding > 0 ? totalOutstanding : grandTotal);
+  const finalWordsAmount = includeOldBalance
+    ? (totalOutstanding > 0 ? totalOutstanding : grandTotal)
+    : grandTotal;
+  const wordsText = pdfNumberToWords(finalWordsAmount);
   const maxTextWidth = wordsBoxWidth - 32 - labelWidth - 12;
   const wordsWrapped = wrapPdfText(wordsText, maxTextWidth, 8.5);
 

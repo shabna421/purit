@@ -79,6 +79,20 @@ export const InvoicePage: React.FC = () => {
   const [location, setLocation] = useState<InventoryLocation | null>(null);
   const [paymentRecords, setPaymentRecords] = useState<PaymentRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [includeOldBalance, setIncludeOldBalance] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('purit_invoice_include_old_balance') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const handleToggleOldBalance = (checked: boolean) => {
+    setIncludeOldBalance(checked);
+    try {
+      localStorage.setItem('purit_invoice_include_old_balance', String(checked));
+    } catch {}
+  };
 
   const containerRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1);
@@ -231,6 +245,7 @@ export const InvoicePage: React.FC = () => {
       paymentType: freshSale.paymentType,
       notes: freshSale.notes,
       footerReference: freshSale.isGstBill && freshSale.gstBillNumber ? freshSale.gstBillNumber : freshSale.id,
+      includeOldBalance,
     };
   };
 
@@ -307,13 +322,17 @@ export const InvoicePage: React.FC = () => {
   const totalOutstanding = snapshot ? snapshot.totalOutstanding : (oldDueAmount + currentBillDueAmount);
   const grandTotalPayable = totalOutstanding;
   const paidStatus = snapshot ? snapshot.paidStatus : (currentBillDueAmount <= 0.001 ? 'PAID' : (paidAmount > 0.001 ? 'PARTIALLY PAID' : 'UNPAID'));
-  const totalInWords = numberToWords(totalOutstanding > 0 ? totalOutstanding : sale.totalAmount);
+  const totalInWords = numberToWords(
+    includeOldBalance
+      ? (totalOutstanding > 0 ? totalOutstanding : sale.totalAmount)
+      : sale.totalAmount
+  );
   const paymentBadgeText = sale.paymentType ? `${paidStatus} (${sale.paymentType.toUpperCase()})` : paidStatus;
 
   return (
     <div className="max-w-5xl mx-auto">
       {/* Action Bar - Hidden on Print */}
-      <div className="flex justify-between items-center mb-6 print:hidden">
+      <div className="flex flex-wrap justify-between items-center gap-3 mb-6 print:hidden">
         <button 
           onClick={() => navigate(-1)}
           className="flex items-center gap-2 text-gray-600 hover:text-gray-900"
@@ -321,7 +340,17 @@ export const InvoicePage: React.FC = () => {
           <ArrowLeft className="w-4 h-4" />
           Back
         </button>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+          {/* Old Balance Option */}
+          <label className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 cursor-pointer transition-colors shadow-2xs select-none">
+            <input
+              type="checkbox"
+              checked={includeOldBalance}
+              onChange={(e) => handleToggleOldBalance(e.target.checked)}
+              className="w-4 h-4 rounded text-orange-500 focus:ring-orange-400 border-gray-300 cursor-pointer accent-orange-500"
+            />
+            <span className="text-xs sm:text-sm font-semibold text-gray-800">Old Balance</span>
+          </label>
           <button 
             type="button"
             onClick={handleDownload}
@@ -595,21 +624,23 @@ export const InvoicePage: React.FC = () => {
               </div>
 
               {/* Card 2: Total Current Outstanding Card */}
-              <div className="border border-gray-100 rounded-xl p-4 bg-white shadow-sm space-y-2.5 text-xs">
-                <p className="font-semibold text-gray-400 uppercase tracking-widest text-[9px]">TOTAL CURRENT OUTSTANDING</p>
-                <div className="flex justify-between text-gray-600">
-                  <span>Old Due Amount</span>
-                  <span className="font-mono">INR {oldDueAmount.toFixed(2)}</span>
+              {includeOldBalance && (
+                <div className="border border-gray-100 rounded-xl p-4 bg-white shadow-sm space-y-2.5 text-xs">
+                  <p className="font-semibold text-gray-400 uppercase tracking-widest text-[9px]">TOTAL CURRENT OUTSTANDING</p>
+                  <div className="flex justify-between text-gray-600">
+                    <span>Old Due Amount</span>
+                    <span className="font-mono">INR {oldDueAmount.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-gray-600">
+                    <span>Current Bill Due Amount</span>
+                    <span className="font-mono">INR {currentBillDueAmount.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between font-bold text-gray-900 border-t border-gray-100 pt-2 mt-1">
+                    <span>Total Outstanding</span>
+                    <span className="font-mono">INR {totalOutstanding.toFixed(2)}</span>
+                  </div>
                 </div>
-                <div className="flex justify-between text-gray-600">
-                  <span>Current Bill Due Amount</span>
-                  <span className="font-mono">INR {currentBillDueAmount.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between font-bold text-gray-900 border-t border-gray-100 pt-2 mt-1">
-                  <span>Total Outstanding</span>
-                  <span className="font-mono">INR {totalOutstanding.toFixed(2)}</span>
-                </div>
-              </div>
+              )}
             </div>
           </div>
 

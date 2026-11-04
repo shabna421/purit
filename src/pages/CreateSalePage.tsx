@@ -184,6 +184,20 @@ export const CreateSalePage: React.FC = () => {
     location: InventoryLocation | null;
   } | null>(null);
   const [invoiceActionLoading, setInvoiceActionLoading] = useState<'download' | 'print' | null>(null);
+  const [includeOldBalance, setIncludeOldBalance] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('purit_invoice_include_old_balance') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const handleToggleOldBalance = (checked: boolean) => {
+    setIncludeOldBalance(checked);
+    try {
+      localStorage.setItem('purit_invoice_include_old_balance', String(checked));
+    } catch {}
+  };
   const [scanInput, setScanInput] = useState('');
   const [lastScanFeedback, setLastScanFeedback] = useState('');
   const [duplicateScanPrompt, setDuplicateScanPrompt] = useState<{
@@ -711,6 +725,7 @@ export const CreateSalePage: React.FC = () => {
         paymentType: activeSale.paymentType,
         notes: activeSale.notes,
         footerReference: activeSale.isGstBill && activeSale.gstBillNumber ? activeSale.gstBillNumber : activeSale.id,
+        includeOldBalance,
       };
 
       const filename = activeSale.isGstBill && activeSale.gstBillNumber ? `invoice-${activeSale.gstBillNumber}.pdf` : `invoice-${activeSale.id.slice(-8).toUpperCase()}.pdf`;
@@ -804,6 +819,7 @@ export const CreateSalePage: React.FC = () => {
         paymentType: activeSale.paymentType,
         notes: activeSale.notes,
         footerReference: activeSale.isGstBill && activeSale.gstBillNumber ? activeSale.gstBillNumber : activeSale.id,
+        includeOldBalance,
       };
 
       const blob = createInvoicePdfBlob(pdfData);
@@ -1471,6 +1487,18 @@ export const CreateSalePage: React.FC = () => {
               </div>
 
               <div className="flex flex-col gap-2 pt-2">
+                <label className="flex items-center justify-between p-3 rounded-xl border border-zinc-200 bg-zinc-50 cursor-pointer hover:bg-zinc-100/60 transition-colors select-none">
+                  <div className="flex flex-col">
+                    <span className="text-xs font-bold text-zinc-800">Old Balance Option</span>
+                    <span className="text-[11px] text-zinc-500">Include previous due & total outstanding</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={includeOldBalance}
+                    onChange={(e) => handleToggleOldBalance(e.target.checked)}
+                    className="w-4 h-4 rounded text-orange-500 focus:ring-orange-400 border-zinc-300 cursor-pointer accent-orange-500"
+                  />
+                </label>
                 <button
                   type="button"
                   onClick={() => handlePrintInvoice(completedSaleData)}
