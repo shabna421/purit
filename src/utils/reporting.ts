@@ -871,7 +871,7 @@ function buildPremiumInvoicePdfBlob(data: InvoicePdfData) {
   });
 
   // Check if we need a new page for totals and footer
-  const includeOldBalance = Boolean(data.includeOldBalance);
+  const includeOldBalance = data.includeOldBalance !== undefined ? Boolean(data.includeOldBalance) : true;
   const neededHeight = includeOldBalance ? 330 : 250;
   if (y < neededHeight) {
     finishPage();

@@ -81,16 +81,17 @@ export const InvoicePage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [includeOldBalance, setIncludeOldBalance] = useState<boolean>(() => {
     try {
-      return localStorage.getItem('purit_invoice_include_old_balance') === 'true';
+      const saved = localStorage.getItem('purit_invoice_include_old_balance_v2');
+      return saved !== null ? saved === 'true' : true;
     } catch {
-      return false;
+      return true;
     }
   });
 
   const handleToggleOldBalance = (checked: boolean) => {
     setIncludeOldBalance(checked);
     try {
-      localStorage.setItem('purit_invoice_include_old_balance', String(checked));
+      localStorage.setItem('purit_invoice_include_old_balance_v2', String(checked));
     } catch {}
   };
 
