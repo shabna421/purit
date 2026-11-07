@@ -692,17 +692,84 @@ export default function CustomerDetailsPage() {
   };
 
   // -------------------------------------------------------------
+  // Dynamic Balance Computation Helper (Matches Firestore/Database Totals)
+  // -------------------------------------------------------------
+  const computeCustomerRunningBalance = useCallback(
+    (currentSales: Sale[], currentPayments: PaymentRecord[], currentReturns: CustomerReturn[]) => {
+      const existingPaymentRefs = new Set(
+        currentPayments.filter((p) => p.referenceId).map((p) => p.referenceId as string)
+      );
+
+      const paymentEntries = currentPayments.map((p) => ({
+        id: p.id,
+        timestamp: p.timestamp,
+        amount: p.amount,
+        tone:
+          p.direction === 'payment_received' ||
+          p.direction === 'write_off' ||
+          p.direction === 'return_refund'
+            ? 'decrease'
+            : 'increase',
+      }));
+
+      const inferredSales = currentSales
+        .filter((s) => s.status !== 'cancelled' && s.totalAmount > s.paidAmount && !existingPaymentRefs.has(s.id))
+        .map((s) => ({
+          id: s.id,
+          timestamp: s.timestamp,
+          amount: s.totalAmount - s.paidAmount,
+          tone: 'increase' as const,
+        }));
+
+      const inferredReturns = currentReturns
+        .filter((entry) => !existingPaymentRefs.has(entry.id))
+        .map((entry) => ({
+          id: entry.id,
+          timestamp: entry.timestamp,
+          amount: entry.totalAmount,
+          tone: 'decrease' as const,
+        }));
+
+      const merged = [...paymentEntries, ...inferredSales, ...inferredReturns].sort((a, b) => a.timestamp - b.timestamp);
+
+      let running = 0;
+      merged.forEach((entry) => {
+        const diff = entry.amount;
+        running += entry.tone === 'increase' ? diff : -diff;
+        running = Math.max(running, 0);
+      });
+
+      return running;
+    },
+    []
+  );
+
+  // -------------------------------------------------------------
   // Edit Handlers
   // -------------------------------------------------------------
   const handleOpenEditModal = (activity: CustomerActivity) => {
-    if (!activity.rawPayment) {
-      const payId = activity.rawId;
-      const record = paymentRecords.find((p) => p.id === payId);
-      if (!record) return;
-      openEditModalWithRecord(record);
-      return;
+    let record = activity.rawPayment;
+    if (!record) {
+      const payId = activity.rawId || activity.id.replace(/^payment-/, '');
+      record = paymentRecords.find((p) => p.id === payId);
     }
-    openEditModalWithRecord(activity.rawPayment);
+    if (!record) {
+      record = {
+        id: activity.rawId || activity.id.replace(/^payment-/, ''),
+        orgId: currentOrg?.id || '',
+        entityType: 'customer',
+        entityId: customer?.id || id || '',
+        amount: activity.amount,
+        direction:
+          activity.type === 'balance_added' || activity.type === 'write_off'
+            ? activity.type
+            : 'payment_received',
+        paymentMethod: activity.paymentMethod || 'cash',
+        notes: activity.note || '',
+        timestamp: activity.timestamp,
+      };
+    }
+    openEditModalWithRecord(record);
   };
 
   const openEditModalWithRecord = (record: PaymentRecord) => {
@@ -712,7 +779,11 @@ export default function CustomerDetailsPage() {
     setEditMethod(record.paymentMethod || 'cash');
     setEditDirection(record.direction || 'payment_received');
 
-    const date = new Date(record.timestamp);
+    const ts =
+      typeof record.timestamp === 'number' && !isNaN(record.timestamp)
+        ? record.timestamp
+        : new Date(record.timestamp || Date.now()).getTime();
+    const date = new Date(isNaN(ts) ? Date.now() : ts);
     const localIsoString = new Date(date.getTime() - date.getTimezoneOffset() * 60000)
       .toISOString()
       .slice(0, 16);
@@ -731,32 +802,52 @@ export default function CustomerDetailsPage() {
     setIsSubmitting(true);
     const parsedTimestamp = editDate ? new Date(editDate).getTime() : Date.now();
     const previousRecords = [...paymentRecords];
+    const previousCustomer = customer ? { ...customer } : null;
 
     // Optimistically update the record in state immediately
-    setPaymentRecords((prev) =>
-      prev.map((p) =>
-        p.id === editingTx.id
-          ? {
-              ...p,
-              amount: editAmount,
-              notes: editNotes.trim(),
-              timestamp: parsedTimestamp,
-              paymentMethod: editMethod,
-              direction: editDirection,
-            }
-          : p
-      )
+    const updatedRecords = paymentRecords.map((p) =>
+      p.id === editingTx.id
+        ? {
+            ...p,
+            amount: editAmount,
+            notes: editNotes.trim(),
+            timestamp: parsedTimestamp,
+            paymentMethod: editMethod,
+            direction: editDirection,
+          }
+        : p
     );
+    setPaymentRecords(updatedRecords);
+
+    // Optimistically update customer balance & live metrics immediately
+    if (customer) {
+      const optBalance = computeCustomerRunningBalance(sales, updatedRecords, returns);
+      setCustomer((prev) => (prev ? { ...prev, balance: optBalance } : null));
+    }
     setEditingTx(null);
 
     try {
-      await saleService.updateCustomerPaymentRecord(currentOrg.id, editingTx.id, {
+      const freshTotals = await saleService.updateCustomerPaymentRecord(currentOrg.id, editingTx.id, {
         amount: editAmount,
         notes: editNotes.trim(),
         timestamp: parsedTimestamp,
         paymentMethod: editMethod,
         direction: editDirection,
       });
+
+      if (freshTotals) {
+        setCustomer((prev) =>
+          prev
+            ? {
+                ...prev,
+                balance: freshTotals.balance,
+                due: freshTotals.due,
+                totalSales: freshTotals.totalSales,
+                collected: freshTotals.collected,
+              }
+            : null
+        );
+      }
 
       await loadData();
       await refreshData();
@@ -765,6 +856,7 @@ export default function CustomerDetailsPage() {
       console.error('Error updating transaction:', error);
       // Revert on error
       setPaymentRecords(previousRecords);
+      if (previousCustomer) setCustomer(previousCustomer);
       notifyError(error.message || 'Failed to update transaction');
     } finally {
       setIsSubmitting(false);
@@ -775,14 +867,28 @@ export default function CustomerDetailsPage() {
   // Delete Handlers
   // -------------------------------------------------------------
   const handleConfirmDelete = (activity: CustomerActivity) => {
-    if (activity.rawPayment) {
-      setDeletingTx(activity.rawPayment);
-      return;
+    let record = activity.rawPayment;
+    if (!record) {
+      const payId = activity.rawId || activity.id.replace(/^payment-/, '');
+      record = paymentRecords.find((p) => p.id === payId);
     }
-    const record = paymentRecords.find((p) => p.id === activity.rawId);
-    if (record) {
-      setDeletingTx(record);
+    if (!record) {
+      record = {
+        id: activity.rawId || activity.id.replace(/^payment-/, ''),
+        orgId: currentOrg?.id || '',
+        entityType: 'customer',
+        entityId: customer?.id || id || '',
+        amount: activity.amount,
+        direction:
+          activity.type === 'balance_added' || activity.type === 'write_off'
+            ? activity.type
+            : 'payment_received',
+        paymentMethod: activity.paymentMethod || 'cash',
+        notes: activity.note || '',
+        timestamp: activity.timestamp,
+      };
     }
+    setDeletingTx(record);
   };
 
   const handleDelete = async () => {
@@ -791,13 +897,35 @@ export default function CustomerDetailsPage() {
     setIsSubmitting(true);
     const deletedId = deletingTx.id;
     const previousRecords = [...paymentRecords];
+    const previousCustomer = customer ? { ...customer } : null;
 
     // Optimistically remove from state immediately
-    setPaymentRecords((prev) => prev.filter((p) => p.id !== deletedId));
+    const updatedRecords = paymentRecords.filter((p) => p.id !== deletedId);
+    setPaymentRecords(updatedRecords);
+
+    // Optimistically update customer balance immediately
+    if (customer) {
+      const optBalance = computeCustomerRunningBalance(sales, updatedRecords, returns);
+      setCustomer((prev) => (prev ? { ...prev, balance: optBalance } : null));
+    }
     setDeletingTx(null);
 
     try {
-      await saleService.deleteCustomerPaymentRecord(currentOrg.id, deletedId);
+      const freshTotals = await saleService.deleteCustomerPaymentRecord(currentOrg.id, deletedId);
+      if (freshTotals) {
+        setCustomer((prev) =>
+          prev
+            ? {
+                ...prev,
+                balance: freshTotals.balance,
+                due: freshTotals.due,
+                totalSales: freshTotals.totalSales,
+                collected: freshTotals.collected,
+              }
+            : null
+        );
+      }
+
       await loadData();
       await refreshData();
       success('Transaction deleted and totals recalculated successfully');
@@ -805,6 +933,7 @@ export default function CustomerDetailsPage() {
       console.error('Error deleting transaction:', error);
       // Revert on error
       setPaymentRecords(previousRecords);
+      if (previousCustomer) setCustomer(previousCustomer);
       notifyError(error.message || 'Failed to delete transaction');
     } finally {
       setIsSubmitting(false);
@@ -1012,97 +1141,113 @@ export default function CustomerDetailsPage() {
       {/* ------------------------------------------------------------- */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         {/* 1. Due / Balance */}
-        <div className="rounded-2xl border border-zinc-200/80 bg-white p-4 sm:p-5 shadow-xs hover:border-zinc-300 transition-all flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Due / Balance</span>
+        <div className="rounded-2xl border border-zinc-200/80 bg-white p-3.5 sm:p-4 shadow-xs hover:border-zinc-300 transition-all flex flex-col justify-between min-w-0 flex-1">
+          <div className="flex items-center justify-between gap-1.5 min-w-0">
+            <span className="text-[10px] sm:text-xs font-semibold uppercase tracking-wider text-zinc-400 truncate">
+              Due / Balance
+            </span>
             <div
-              className={`w-7 h-7 rounded-xl flex items-center justify-center ${
+              className={`w-6 h-6 sm:w-7 sm:h-7 rounded-xl flex items-center justify-center shrink-0 ${
                 summaryMetrics.due > 0 ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'
               }`}
             >
-              <Clock className="w-4 h-4" />
+              <Clock className="w-3.5 h-3.5" />
             </div>
           </div>
-          <div className="mt-3">
+          <div className="mt-2.5 sm:mt-3 min-w-0">
             <p
-              className={`text-xl sm:text-2xl font-bold tracking-tight font-mono ${
+              title={formatCurrency(summaryMetrics.due, currentOrg.settings.currency)}
+              className={`text-sm sm:text-base font-bold tracking-tight font-mono truncate ${
                 summaryMetrics.due > 0 ? 'text-rose-600' : 'text-emerald-600'
               }`}
             >
               {formatCurrency(summaryMetrics.due, currentOrg.settings.currency)}
             </p>
-            <p className="mt-1 text-xs text-zinc-400">
+            <p className="mt-1 text-[10px] sm:text-xs text-zinc-400 truncate">
               {summaryMetrics.due > 0 ? 'Live outstanding credit' : 'All balance cleared'}
             </p>
           </div>
         </div>
 
         {/* 2. Total Sales */}
-        <div className="rounded-2xl border border-zinc-200/80 bg-white p-4 sm:p-5 shadow-xs hover:border-zinc-300 transition-all flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Total Sales</span>
-            <div className="w-7 h-7 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
-              <ShoppingCart className="w-4 h-4" />
+        <div className="rounded-2xl border border-zinc-200/80 bg-white p-3.5 sm:p-4 shadow-xs hover:border-zinc-300 transition-all flex flex-col justify-between min-w-0 flex-1">
+          <div className="flex items-center justify-between gap-1.5 min-w-0">
+            <span className="text-[10px] sm:text-xs font-semibold uppercase tracking-wider text-zinc-400 truncate">
+              Total Sales
+            </span>
+            <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+              <ShoppingCart className="w-3.5 h-3.5" />
             </div>
           </div>
-          <div className="mt-3">
-            <p className="text-xl sm:text-2xl font-bold tracking-tight text-zinc-900 font-mono">
+          <div className="mt-2.5 sm:mt-3 min-w-0">
+            <p
+              title={formatCurrency(summaryMetrics.totalSales, currentOrg.settings.currency)}
+              className="text-sm sm:text-base font-bold tracking-tight text-zinc-900 font-mono truncate"
+            >
               {formatCurrency(summaryMetrics.totalSales, currentOrg.settings.currency)}
             </p>
-            <p className="mt-1 text-xs text-zinc-400">
+            <p className="mt-1 text-[10px] sm:text-xs text-zinc-400 truncate">
               {sales.length} total invoice{sales.length === 1 ? '' : 's'}
             </p>
           </div>
         </div>
 
         {/* 3. Collected */}
-        <div className="rounded-2xl border border-zinc-200/80 bg-white p-4 sm:p-5 shadow-xs hover:border-zinc-300 transition-all flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Collected</span>
-            <div className="w-7 h-7 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
-              <Coins className="w-4 h-4" />
+        <div className="rounded-2xl border border-zinc-200/80 bg-white p-3.5 sm:p-4 shadow-xs hover:border-zinc-300 transition-all flex flex-col justify-between min-w-0 flex-1">
+          <div className="flex items-center justify-between gap-1.5 min-w-0">
+            <span className="text-[10px] sm:text-xs font-semibold uppercase tracking-wider text-zinc-400 truncate">
+              Collected
+            </span>
+            <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+              <Coins className="w-3.5 h-3.5" />
             </div>
           </div>
-          <div className="mt-3">
-            <p className="text-xl sm:text-2xl font-bold tracking-tight text-emerald-600 font-mono">
+          <div className="mt-2.5 sm:mt-3 min-w-0">
+            <p
+              title={formatCurrency(summaryMetrics.collected, currentOrg.settings.currency)}
+              className="text-sm sm:text-base font-bold tracking-tight text-emerald-600 font-mono truncate"
+            >
               {formatCurrency(summaryMetrics.collected, currentOrg.settings.currency)}
             </p>
-            <p className="mt-1 text-xs text-zinc-400">Payments & collections received</p>
+            <p className="mt-1 text-[10px] sm:text-xs text-zinc-400 truncate">Payments & collections received</p>
           </div>
         </div>
 
-        {/* 4. Net Profit */}
-        <div className="rounded-2xl border border-zinc-200/80 bg-white p-4 sm:p-5 shadow-xs hover:border-zinc-300 transition-all flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Net Status</span>
+        {/* 4. Net Status */}
+        <div className="rounded-2xl border border-zinc-200/80 bg-white p-3.5 sm:p-4 shadow-xs hover:border-zinc-300 transition-all flex flex-col justify-between min-w-0 flex-1">
+          <div className="flex items-center justify-between gap-1.5 min-w-0">
+            <div className="flex items-center gap-1.5 min-w-0 truncate">
+              <span className="text-[10px] sm:text-xs font-semibold uppercase tracking-wider text-zinc-400 truncate">
+                Net Status
+              </span>
               <span
-                className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                className={`text-[9px] sm:text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
                   summaryMetrics.netProfit >= 0
                     ? 'bg-emerald-50 text-emerald-700'
                     : 'bg-rose-50 text-rose-700'
                 }`}
               >
-                {summaryMetrics.netProfit >= 0 ? 'Net Profit' : 'Net Loss'}
+                {summaryMetrics.netProfit >= 0 ? 'Profit' : 'Loss'}
               </span>
             </div>
             <div
-              className={`w-7 h-7 rounded-xl flex items-center justify-center ${
+              className={`w-6 h-6 sm:w-7 sm:h-7 rounded-xl flex items-center justify-center shrink-0 ${
                 summaryMetrics.netProfit >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'
               }`}
             >
-              <BarChart2 className="w-4 h-4" />
+              <BarChart2 className="w-3.5 h-3.5" />
             </div>
           </div>
-          <div className="mt-3">
+          <div className="mt-2.5 sm:mt-3 min-w-0">
             <p
-              className={`text-xl sm:text-2xl font-bold tracking-tight font-mono ${
+              title={formatCurrency(summaryMetrics.netProfit, currentOrg.settings.currency)}
+              className={`text-sm sm:text-base font-bold tracking-tight font-mono truncate ${
                 summaryMetrics.netProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'
               }`}
             >
               {formatCurrency(summaryMetrics.netProfit, currentOrg.settings.currency)}
             </p>
-            <p className="mt-1 text-xs text-zinc-400 truncate">
+            <p className="mt-1 text-[10px] sm:text-xs text-zinc-400 truncate">
               Profit {formatCurrency(summaryMetrics.profit, currentOrg.settings.currency)}
               {summaryMetrics.dispenserCost > 0 &&
                 ` • Disp -${formatCurrency(summaryMetrics.dispenserCost, currentOrg.settings.currency)}`}
@@ -1387,53 +1532,58 @@ export default function CustomerDetailsPage() {
                   </div>
 
                   {/* Right: Amount, Balance After, Edit/Delete Action Icons */}
-                  <div className="flex items-center justify-between sm:justify-end gap-4 shrink-0 pl-13 sm:pl-0 border-t sm:border-t-0 pt-2 sm:pt-0 border-zinc-50">
-                    <div className="text-left sm:text-right">
+                  <div className="flex flex-wrap sm:flex-nowrap items-center justify-between sm:justify-end gap-3 sm:gap-4 shrink-0 border-t sm:border-t-0 pt-2.5 sm:pt-0 border-zinc-100">
+                    <div className="text-left sm:text-right min-w-0">
                       {/* Amount with (+ / -) color coding */}
                       <p
-                        className={`text-lg sm:text-xl font-bold font-mono tracking-tight ${entry.amountClass}`}
+                        className={`text-base sm:text-lg font-bold font-mono tracking-tight truncate ${entry.amountClass}`}
+                        title={`${entry.displaySign}${formatCurrency(entry.amount, currentOrg.settings.currency)}`}
                       >
                         {entry.displaySign}
                         {formatCurrency(entry.amount, currentOrg.settings.currency)}
                       </p>
                       {entry.balanceAfter !== null && (
-                        <p className="text-xs text-zinc-400 mt-0.5 font-mono">
+                        <p className="text-[11px] sm:text-xs text-zinc-400 mt-0.5 font-mono truncate">
                           Balance after: {formatCurrency(entry.balanceAfter, currentOrg.settings.currency)}
                         </p>
                       )}
                     </div>
 
-                    {/* Action Buttons: Edit / Delete on manual entries, or View on Sales */}
-                    <div className="flex items-center gap-1.5 border-l border-zinc-100 pl-3">
-                      {entry.isManualEntry ? (
-                        <>
+                    {/* Action Buttons: Edit / Delete on transaction rows (Add Due, Collect Payment, Reduce Balance, etc.) */}
+                    <div className="flex items-center gap-1.5 sm:border-l sm:border-zinc-200 sm:pl-3 shrink-0">
+                      {entry.rawPayment ||
+                      entry.isManualEntry ||
+                      entry.type === 'payment_received' ||
+                      entry.type === 'balance_added' ||
+                      entry.type === 'write_off' ? (
+                        <div className="flex items-center gap-1.5">
                           <button
                             type="button"
                             onClick={() => handleOpenEditModal(entry)}
-                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-semibold text-zinc-600 hover:text-orange-600 hover:bg-orange-50 border border-zinc-200/60 hover:border-orange-200 transition-all shadow-2xs"
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold text-zinc-700 hover:text-orange-600 hover:bg-orange-50 border border-zinc-200/80 hover:border-orange-200 transition-all shadow-2xs group/btn"
                             title="Edit transaction"
                           >
-                            <Pencil className="w-3.5 h-3.5" />
-                            <span className="hidden sm:inline">Edit</span>
+                            <Pencil className="w-3.5 h-3.5 text-zinc-500 group-hover/btn:text-orange-600 shrink-0" />
+                            <span>Edit</span>
                           </button>
                           <button
                             type="button"
                             onClick={() => handleConfirmDelete(entry)}
-                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-semibold text-zinc-600 hover:text-rose-600 hover:bg-rose-50 border border-zinc-200/60 hover:border-rose-200 transition-all shadow-2xs"
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold text-zinc-700 hover:text-rose-600 hover:bg-rose-50 border border-zinc-200/80 hover:border-rose-200 transition-all shadow-2xs group/btn"
                             title="Delete transaction"
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
-                            <span className="hidden sm:inline">Delete</span>
+                            <Trash2 className="w-3.5 h-3.5 text-zinc-500 group-hover/btn:text-rose-600 shrink-0" />
+                            <span>Delete</span>
                           </button>
-                        </>
+                        </div>
                       ) : entry.type === 'sale' && entry.rawSale ? (
                         <Link
                           to={`/sales/${entry.rawSale.id}/invoice`}
-                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-semibold text-zinc-600 hover:text-blue-600 hover:bg-blue-50 border border-zinc-200/60 hover:border-blue-200 transition-all shadow-2xs"
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold text-zinc-700 hover:text-blue-600 hover:bg-blue-50 border border-zinc-200/80 hover:border-blue-200 transition-all shadow-2xs group/btn"
                           title="View Invoice"
                         >
-                          <Eye className="w-3.5 h-3.5" />
-                          <span className="hidden sm:inline">Invoice</span>
+                          <Eye className="w-3.5 h-3.5 text-zinc-500 group-hover/btn:text-blue-600 shrink-0" />
+                          <span>Invoice</span>
                         </Link>
                       ) : null}
                     </div>
@@ -1725,13 +1875,23 @@ export default function CustomerDetailsPage() {
                   />
                 </div>
 
-                <button
-                  type="submit"
-                  disabled={isSubmitting || editAmount <= 0}
-                  className="w-full py-3 bg-orange-500 hover:bg-orange-600 text-white rounded-xl font-bold shadow-md shadow-orange-500/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Save Changes'}
-                </button>
+                <div className="flex items-center justify-end gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditingTx(null)}
+                    disabled={isSubmitting}
+                    className="px-4 py-2.5 border border-zinc-200 text-zinc-700 rounded-xl font-medium hover:bg-zinc-50 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSubmitting || editAmount <= 0}
+                    className="flex-1 py-2.5 bg-orange-500 hover:bg-orange-600 text-white rounded-xl font-bold shadow-md shadow-orange-500/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Save Changes'}
+                  </button>
+                </div>
               </form>
             </motion.div>
           </div>
@@ -1762,10 +1922,9 @@ export default function CustomerDetailsPage() {
               </div>
 
               <div>
-                <h3 className="text-xl font-bold text-zinc-900">Delete this transaction?</h3>
+                <h3 className="text-xl font-bold text-zinc-900">Are you sure you want to delete this transaction?</h3>
                 <p className="text-sm text-zinc-500 mt-1">
-                  This action will permanently delete this record and instantly recalculate {customer.name}&apos;s
-                  balance, collected totals, and audit trail in real-time. This cannot be undone.
+                  This transaction will be permanently deleted and customer totals (Total Sales, Collected, Due, Balance) will be recalculated immediately in real-time.
                 </p>
               </div>
 
@@ -1812,10 +1971,10 @@ export default function CustomerDetailsPage() {
                   type="button"
                   onClick={handleDelete}
                   disabled={isSubmitting}
-                  className="px-4 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-semibold shadow-sm transition-colors flex items-center gap-1.5"
+                  className="px-4 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-semibold shadow-sm transition-colors flex items-center gap-1.5 disabled:opacity-50"
                 >
                   {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
-                  Delete Permanently
+                  Delete
                 </button>
               </div>
             </motion.div>

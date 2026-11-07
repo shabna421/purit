@@ -1201,7 +1201,14 @@ export const saleService = {
       paymentMethod: PaymentRecord['paymentMethod'];
       direction: PaymentRecord['direction'];
     }
-  ): Promise<void> {
+  ): Promise<{
+    balance: number;
+    totalSales: number;
+    collected: number;
+    due: number;
+    profit: number;
+    netProfit: number;
+  }> {
     const { data: paymentData, error: payErr } = await supabase
       .from('payments')
       .select('*')
@@ -1245,12 +1252,20 @@ export const saleService = {
       .eq('id', paymentId)
       .eq('orgId', orgId);
 
-    await this.recalculateCustomerBalanceAndHistory(orgId, customerId);
+    const totals = await this.recalculateCustomerBalanceAndHistory(orgId, customerId);
     notifyDataChanged('payments', orgId, 'update');
     notifyDataChanged('customers', orgId, 'update');
+    return totals;
   },
 
-  async deleteCustomerPaymentRecord(orgId: string, paymentId: string): Promise<void> {
+  async deleteCustomerPaymentRecord(orgId: string, paymentId: string): Promise<{
+    balance: number;
+    totalSales: number;
+    collected: number;
+    due: number;
+    profit: number;
+    netProfit: number;
+  }> {
     const { data: paymentData, error: payErr } = await supabase
       .from('payments')
       .select('*')
@@ -1287,9 +1302,10 @@ export const saleService = {
       .eq('id', paymentId)
       .eq('orgId', orgId);
 
-    await this.recalculateCustomerBalanceAndHistory(orgId, customerId);
+    const totals = await this.recalculateCustomerBalanceAndHistory(orgId, customerId);
     notifyDataChanged('payments', orgId, 'delete');
     notifyDataChanged('customers', orgId, 'update');
+    return totals;
   },
 
   async getRealtimeInvoiceData(
