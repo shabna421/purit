@@ -110,6 +110,19 @@ export default function SupplierDetailsPage() {
     }
   }, [currentOrg, id]);
 
+  useEffect(() => {
+    const handleDataChanged = (e: any) => {
+      const table = e?.detail?.table;
+      if (!table || table === 'suppliers' || table === 'payments' || table === 'purchases') {
+        if (currentOrg && id) {
+          loadData();
+        }
+      }
+    };
+    window.addEventListener('purit_data_changed', handleDataChanged);
+    return () => window.removeEventListener('purit_data_changed', handleDataChanged);
+  }, [currentOrg, id]);
+
   const loadData = async () => {
     if (!currentOrg || !id) return;
     setLoading(true);

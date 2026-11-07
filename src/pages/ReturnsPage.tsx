@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useTenancy, useAuth } from '../contexts';
+import { useRealtimeData } from '../contexts/RealtimeDataContext';
 import { inventoryService } from '../services/inventoryService';
 import { saleService } from '../services/saleService';
 import { Item, Customer, InventoryLocation, ReturnLine } from '../types';
@@ -13,6 +14,7 @@ import { formatNumericInput, parseNumericInput } from '../utils/numbers';
 export default function ReturnsPage() {
   const { currentOrg } = useTenancy();
   const { user } = useAuth();
+  const { refreshData } = useRealtimeData();
   const { success, error: notifyError } = useNotifications();
   
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -28,17 +30,29 @@ export default function ReturnsPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const multiLocationEnabled = currentOrg?.settings?.multiLocationEnabled ?? false;
 
-  useEffect(() => {
+  const loadData = React.useCallback(() => {
     if (currentOrg) {
       saleService.getCustomers(currentOrg.id).then(setCustomers);
       inventoryService.getItems(currentOrg.id, { includeDeleted: true }).then(setItems);
       inventoryService.getLocations(currentOrg.id).then(locs => {
         setLocations(locs);
         const def = locs.find(l => l.isDefault || l.type === 'warehouse');
-        if (def) setSelectedLocation(def.id);
+        if (def && !selectedLocation) setSelectedLocation(def.id);
       });
     }
-  }, [currentOrg]);
+  }, [currentOrg, selectedLocation]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  useEffect(() => {
+    const handleDataChanged = () => {
+      loadData();
+    };
+    window.addEventListener('purit_data_changed', handleDataChanged);
+    return () => window.removeEventListener('purit_data_changed', handleDataChanged);
+  }, [loadData]);
 
   useEffect(() => {
     if (!currentOrg || !selectedCustomer) {
@@ -117,6 +131,8 @@ export default function ReturnsPage() {
         reason,
       });
       
+      await refreshData();
+      loadData();
       success('Return processed successfully. Stock updated.');
       setReturnItems([]);
       setSelectedCustomer('');

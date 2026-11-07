@@ -25,6 +25,19 @@ export default function TrucksPage() {
     }
   }, [currentOrg]);
 
+  useEffect(() => {
+    const handleDataChanged = (e: any) => {
+      const table = e?.detail?.table;
+      if (!table || table === 'trucks' || table === 'locations') {
+        if (currentOrg) {
+          fetchTrucks();
+        }
+      }
+    };
+    window.addEventListener('purit_data_changed', handleDataChanged);
+    return () => window.removeEventListener('purit_data_changed', handleDataChanged);
+  }, [currentOrg]);
+
   const fetchTrucks = async () => {
     if (!currentOrg) return;
     try {

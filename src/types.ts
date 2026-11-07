@@ -188,6 +188,10 @@ export interface Customer {
   route?: string;
   balance: number;
   gstin?: string;
+  totalSales?: number;
+  collected?: number;
+  due?: number;
+  netProfit?: number;
 }
 
 export interface InventoryLocation {

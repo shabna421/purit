@@ -84,7 +84,7 @@ function buildDraftFromSale(sale: Sale): EditableSaleDraft {
 export default function SalesPage() {
   const { currentOrg } = useTenancy();
   const { success, error: notifyError } = useNotifications();
-  const { sales, customers, items, locations, loading } = useRealtimeData();
+  const { sales, customers, items, locations, loading, refreshData } = useRealtimeData();
   const [saving, setSaving] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedSaleId, setSelectedSaleId] = useState<string | null>(null);
@@ -230,6 +230,7 @@ export default function SalesPage() {
       });
 
       setEditingSale(null);
+      await refreshData();
       success('Sale updated successfully');
     } catch (error: any) {
       notifyError(error.message || 'Failed to update sale');
@@ -246,6 +247,7 @@ export default function SalesPage() {
       await saleService.deleteSale(currentOrg.id, sale.id);
       if (selectedSaleId === sale.id) setSelectedSaleId(null);
       if (editingSale?.id === sale.id) setEditingSale(null);
+      await refreshData();
       success('Sale deleted successfully');
     } catch (error: any) {
       notifyError(error.message || 'Failed to delete sale');

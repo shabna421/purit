@@ -1,7 +1,7 @@
 import { supabase } from '../supabaseClient';
 import { Truck, InventoryLocation } from '../types';
 import { inventoryService } from './inventoryService';
-import { generateId, stripUndefined } from './dbUtils';
+import { generateId, stripUndefined, notifyDataChanged } from './dbUtils';
 
 export const truckService = {
   async createTruck(orgId: string, data: Omit<Truck, 'id' | 'orgId' | 'createdAt'>): Promise<Truck> {
@@ -42,6 +42,8 @@ export const truckService = {
       console.error('Error creating truck:', truckError);
       throw new Error(truckError.message);
     }
+
+    notifyDataChanged('locations', orgId, 'insert');
 
     return truckData;
   },
@@ -104,6 +106,8 @@ export const truckService = {
         console.error('Error updating truck location name:', locError);
       }
     }
+
+    notifyDataChanged('locations', orgId, 'update');
   },
 
   async deleteTruck(orgId: string, truckId: string, locationId: string): Promise<void> {
@@ -134,5 +138,7 @@ export const truckService = {
       console.error('Error deleting truck location:', locError);
       throw new Error(locError.message);
     }
+
+    notifyDataChanged('locations', orgId, 'delete');
   },
 };

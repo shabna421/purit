@@ -11,7 +11,7 @@ import {
   InventoryLocation,
 } from '../types';
 import { isValidQuantityForUnit } from '../utils/quantity';
-import { generateId, stripUndefined } from './dbUtils';
+import { generateId, stripUndefined, notifyDataChanged } from './dbUtils';
 
 export interface RealtimeInvoiceSnapshot {
   sale: Sale;
@@ -119,6 +119,7 @@ export const saleService = {
       console.error('Error creating customer:', error);
       throw new Error(error.message);
     }
+    notifyDataChanged('customers', orgId, 'insert');
     return newCustomer;
   },
 
@@ -298,6 +299,12 @@ export const saleService = {
       await supabase.from('transactions').insert(invTrans);
     }
 
+    notifyDataChanged('sales', orgId, 'insert');
+    notifyDataChanged('customers', orgId, 'update');
+    notifyDataChanged('items', orgId, 'update');
+    notifyDataChanged('transactions', orgId, 'insert');
+    notifyDataChanged('payments', orgId, 'insert');
+
     return sale;
   },
 
@@ -371,6 +378,7 @@ export const saleService = {
       console.error('Error updating customer:', error);
       throw new Error(error.message);
     }
+    notifyDataChanged('customers', orgId, 'update');
   },
 
   async deleteCustomer(orgId: string, customerId: string): Promise<void> {
@@ -397,6 +405,7 @@ export const saleService = {
       console.error('Error deleting customer:', deleteErr);
       throw new Error(deleteErr.message);
     }
+    notifyDataChanged('customers', orgId, 'delete');
   },
 
   async getCustomerReturnEligibility(
@@ -585,6 +594,12 @@ export const saleService = {
       throw new Error(returnInsertErr.message);
     }
 
+    notifyDataChanged('sales', orgId, 'update');
+    notifyDataChanged('customers', orgId, 'update');
+    notifyDataChanged('items', orgId, 'update');
+    notifyDataChanged('transactions', orgId, 'insert');
+    notifyDataChanged('payments', orgId, 'insert');
+
     return returnRecord;
   },
 
@@ -597,6 +612,7 @@ export const saleService = {
       action: 'collect-payment' | 'add-due' | 'write-off';
       paymentMethod?: 'cash' | 'bank' | 'cheque';
       notes?: string;
+      timestamp?: number;
     }
   ): Promise<PaymentRecord> {
     const { data: customer, error: fetchErr } = await supabase
@@ -646,7 +662,7 @@ export const saleService = {
       direction,
       balanceAfter: nextBalance,
       paymentMethod: data.paymentMethod || 'cash',
-      timestamp: Date.now(),
+      timestamp: data.timestamp || Date.now(),
       userId,
       notes: data.notes || '',
     };
@@ -659,6 +675,11 @@ export const saleService = {
       console.error('Error creating customer balance payment:', insertErr);
       throw new Error(insertErr.message);
     }
+
+    await this.recalculateCustomerBalanceAndHistory(orgId, data.customerId);
+
+    notifyDataChanged('payments', orgId, 'insert');
+    notifyDataChanged('customers', orgId, 'update');
 
     return paymentRecord;
   },
@@ -930,6 +951,12 @@ export const saleService = {
         orgId,
       });
     }
+
+    notifyDataChanged('sales', orgId, 'update');
+    notifyDataChanged('customers', orgId, 'update');
+    notifyDataChanged('items', orgId, 'update');
+    notifyDataChanged('transactions', orgId, 'update');
+    notifyDataChanged('payments', orgId, 'update');
   },
 
   async deleteSale(orgId: string, saleId: string): Promise<void> {
@@ -1003,9 +1030,18 @@ export const saleService = {
     await supabase.from('sales').delete().eq('id', saleId).eq('orgId', orgId);
     await supabase.from('transactions').delete().eq('referenceId', saleId).eq('orgId', orgId);
     await supabase.from('payments').delete().eq('referenceId', saleId).eq('orgId', orgId);
+
+    notifyDataChanged('sales', orgId, 'delete');
+    notifyDataChanged('customers', orgId, 'update');
+    notifyDataChanged('items', orgId, 'update');
+    notifyDataChanged('transactions', orgId, 'delete');
+    notifyDataChanged('payments', orgId, 'delete');
   },
 
-  async recalculateCustomerBalanceAndHistory(orgId: string, customerId: string): Promise<void> {
+  async recalculateCustomerBalanceAndHistory(
+    orgId: string,
+    customerId: string
+  ): Promise<{ balance: number; totalSales: number; collected: number; due: number; profit: number; netProfit: number }> {
     const { data: customer, error: custErr } = await supabase
       .from('customers')
       .select('*')
@@ -1015,15 +1051,17 @@ export const saleService = {
 
     if (custErr || !customer) throw new Error('Customer not found');
 
-    const [salesRes, returnsRes, paymentsRes] = await Promise.all([
+    const [salesRes, returnsRes, paymentsRes, itemsRes] = await Promise.all([
       supabase.from('sales').select('*').eq('orgId', orgId).eq('customerId', customerId),
       supabase.from('customer_returns').select('*').eq('orgId', orgId).eq('customerId', customerId),
       supabase.from('payments').select('*').eq('orgId', orgId).eq('entityType', 'customer').eq('entityId', customerId),
+      supabase.from('items').select('id, basePrice').eq('orgId', orgId),
     ]);
 
     const salesData = (salesRes.data || []) as Sale[];
     const returnsData = (returnsRes.data || []) as CustomerReturn[];
     const paymentsData = (paymentsRes.data || []) as PaymentRecord[];
+    const itemsMap = new Map(((itemsRes.data || []) as any[]).map((i) => [i.id, Number(i.basePrice) || 0]));
 
     const existingPaymentRefs = new Set(
       paymentsData.filter((p) => p.referenceId).map((p) => p.referenceId as string)
@@ -1043,7 +1081,7 @@ export const saleService = {
     }));
 
     const inferredSales = salesData
-      .filter((s) => s.totalAmount > s.paidAmount && !existingPaymentRefs.has(s.id))
+      .filter((s) => s.status !== 'cancelled' && s.totalAmount > s.paidAmount && !existingPaymentRefs.has(s.id))
       .map((s) => ({
         id: s.id,
         isPayment: false,
@@ -1077,19 +1115,80 @@ export const saleService = {
       }
     });
 
-    await supabase
-      .from('customers')
-      .update({ balance: runningBalance })
-      .eq('id', customerId)
-      .eq('orgId', orgId);
+    const totalSales = salesData
+      .filter((s) => s.status !== 'cancelled')
+      .reduce((sum, s) => sum + (s.totalAmount || 0), 0);
+    const upfrontCollected = salesData
+      .filter((s) => s.status !== 'cancelled')
+      .reduce((sum, s) => sum + (s.paidAmount || 0), 0);
+    const manualCollected = paymentsData
+      .filter((p) => p.direction === 'payment_received')
+      .reduce((sum, p) => sum + (p.amount || 0), 0);
+    const totalCollected = Math.max(upfrontCollected + manualCollected, Math.max(0, totalSales - runningBalance));
 
-    for (const update of paymentUpdates) {
+    let grossProfit = 0;
+    salesData
+      .filter((s) => s.status !== 'cancelled')
+      .forEach((s) => {
+        (s.items || []).forEach((line) => {
+          const cost = (itemsMap.get(line.itemId) || 0) * (Number(line.quantity) || 0);
+          const rev = (Number(line.unitPrice) || 0) * (Number(line.quantity) || 0);
+          grossProfit += rev - cost;
+        });
+      });
+
+    // Update customer document in database (with fallback for standard columns)
+    try {
+      const { error: fullUpdateErr } = await supabase
+        .from('customers')
+        .update({
+          balance: runningBalance,
+          totalSales,
+          collected: totalCollected,
+          due: runningBalance,
+          netProfit: grossProfit,
+        })
+        .eq('id', customerId)
+        .eq('orgId', orgId);
+
+      if (fullUpdateErr) {
+        await supabase
+          .from('customers')
+          .update({ balance: runningBalance })
+          .eq('id', customerId)
+          .eq('orgId', orgId);
+      }
+    } catch {
       await supabase
-        .from('payments')
-        .update({ balanceAfter: update.balanceAfter })
-        .eq('id', update.id)
+        .from('customers')
+        .update({ balance: runningBalance })
+        .eq('id', customerId)
         .eq('orgId', orgId);
     }
+
+    if (paymentUpdates.length > 0) {
+      await Promise.all(
+        paymentUpdates.map((update) =>
+          supabase
+            .from('payments')
+            .update({ balanceAfter: update.balanceAfter })
+            .eq('id', update.id)
+            .eq('orgId', orgId)
+        )
+      );
+    }
+
+    notifyDataChanged('customers', orgId, 'recalculate');
+    notifyDataChanged('payments', orgId, 'recalculate');
+
+    return {
+      balance: runningBalance,
+      totalSales,
+      collected: totalCollected,
+      due: runningBalance,
+      profit: grossProfit,
+      netProfit: grossProfit,
+    };
   },
 
   async updateCustomerPaymentRecord(
@@ -1147,6 +1246,8 @@ export const saleService = {
       .eq('orgId', orgId);
 
     await this.recalculateCustomerBalanceAndHistory(orgId, customerId);
+    notifyDataChanged('payments', orgId, 'update');
+    notifyDataChanged('customers', orgId, 'update');
   },
 
   async deleteCustomerPaymentRecord(orgId: string, paymentId: string): Promise<void> {
@@ -1187,6 +1288,8 @@ export const saleService = {
       .eq('orgId', orgId);
 
     await this.recalculateCustomerBalanceAndHistory(orgId, customerId);
+    notifyDataChanged('payments', orgId, 'delete');
+    notifyDataChanged('customers', orgId, 'update');
   },
 
   async getRealtimeInvoiceData(

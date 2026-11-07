@@ -70,7 +70,7 @@ export default function ExpenseTrackerPage() {
   const { currentOrg, membership } = useTenancy();
   const { user } = useAuth();
   const { success, error: notifyError } = useNotifications();
-  const { expenses: entries, loading: realtimeLoading } = useRealtimeData();
+  const { expenses: entries, loading: realtimeLoading, refreshData } = useRealtimeData();
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -327,6 +327,7 @@ export default function ExpenseTrackerPage() {
       }
       setIsModalOpen(false);
       resetForm();
+      await refreshData();
       success(
         editingEntry
           ? `${form.type === 'expense' ? 'Expense' : 'Investment'} updated successfully.`
@@ -346,6 +347,7 @@ export default function ExpenseTrackerPage() {
     setDeletingEntryId(entry.id);
     try {
       await expenseService.deleteEntry(currentOrg.id, entry.id);
+      await refreshData();
       success('Entry deleted successfully.');
     } catch (error) {
       console.error(error);

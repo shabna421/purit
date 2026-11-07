@@ -1,6 +1,6 @@
 import { supabase } from '../supabaseClient';
 import { ExpenseEntry } from '../types';
-import { generateId, stripUndefined } from './dbUtils';
+import { generateId, stripUndefined, notifyDataChanged } from './dbUtils';
 
 export const expenseService = {
   async getEntries(orgId: string): Promise<ExpenseEntry[]> {
@@ -40,6 +40,8 @@ export const expenseService = {
       throw new Error(error.message);
     }
 
+    notifyDataChanged('expense_entries', orgId, 'insert');
+
     return nextEntry;
   },
 
@@ -59,6 +61,8 @@ export const expenseService = {
       console.error('Error updating expense entry:', error);
       throw new Error(error.message);
     }
+
+    notifyDataChanged('expense_entries', orgId, 'update');
   },
 
   async deleteEntry(orgId: string, entryId: string): Promise<void> {
@@ -72,5 +76,7 @@ export const expenseService = {
       console.error('Error deleting expense entry:', error);
       throw new Error(error.message);
     }
+
+    notifyDataChanged('expense_entries', orgId, 'delete');
   },
 };

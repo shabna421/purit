@@ -1,6 +1,6 @@
 import { supabase } from '../supabaseClient';
 import { Supplier, Purchase, InventoryTransaction, PaymentRecord } from '../types';
-import { generateId, stripUndefined } from './dbUtils';
+import { generateId, stripUndefined, notifyDataChanged } from './dbUtils';
 
 export const purchaseService = {
   async getSuppliers(orgId: string): Promise<Supplier[]> {
@@ -34,6 +34,7 @@ export const purchaseService = {
       console.error('Error creating supplier:', error);
       throw new Error(error.message);
     }
+    notifyDataChanged('suppliers', orgId, 'insert');
     return newSupplier;
   },
 
@@ -48,6 +49,7 @@ export const purchaseService = {
       console.error('Error updating supplier:', error);
       throw new Error(error.message);
     }
+    notifyDataChanged('suppliers', orgId, 'update');
   },
 
   async deleteSupplier(orgId: string, supplierId: string): Promise<void> {
@@ -76,6 +78,7 @@ export const purchaseService = {
       console.error('Error deleting supplier:', deleteError);
       throw new Error(deleteError.message);
     }
+    notifyDataChanged('suppliers', orgId, 'delete');
   },
 
   async createPurchase(orgId: string, purchaseData: Omit<Purchase, 'id' | 'timestamp'>): Promise<Purchase> {
@@ -208,6 +211,12 @@ export const purchaseService = {
       await supabase.from('transactions').insert(invTrans);
     }
 
+    notifyDataChanged('purchases', orgId, 'insert');
+    notifyDataChanged('suppliers', orgId, 'update');
+    notifyDataChanged('items', orgId, 'update');
+    notifyDataChanged('transactions', orgId, 'insert');
+    notifyDataChanged('payments', orgId, 'insert');
+
     return purchase;
   },
 
@@ -318,6 +327,9 @@ export const purchaseService = {
       throw new Error(insertError.message);
     }
 
+    notifyDataChanged('payments', orgId, 'insert');
+    notifyDataChanged('suppliers', orgId, 'update');
+
     return paymentRecord;
   },
 
@@ -391,6 +403,9 @@ export const purchaseService = {
         .eq('id', update.id)
         .eq('orgId', orgId);
     }
+
+    notifyDataChanged('suppliers', orgId, 'recalculate');
+    notifyDataChanged('payments', orgId, 'recalculate');
   },
 
   async updateSupplierPaymentRecord(
@@ -473,6 +488,8 @@ export const purchaseService = {
       .eq('orgId', orgId);
 
     await this.recalculateSupplierBalanceAndHistory(orgId, supplierId);
+    notifyDataChanged('payments', orgId, 'update');
+    notifyDataChanged('suppliers', orgId, 'update');
   },
 
   async deleteSupplierPaymentRecord(orgId: string, paymentId: string): Promise<void> {
@@ -495,6 +512,8 @@ export const purchaseService = {
         .eq('orgId', orgId);
 
       await this.recalculateSupplierBalanceAndHistory(orgId, supplierId);
+      notifyDataChanged('purchases', orgId, 'update');
+      notifyDataChanged('suppliers', orgId, 'update');
       return;
     }
 
@@ -532,5 +551,7 @@ export const purchaseService = {
       .eq('orgId', orgId);
 
     await this.recalculateSupplierBalanceAndHistory(orgId, supplierId);
+    notifyDataChanged('payments', orgId, 'delete');
+    notifyDataChanged('suppliers', orgId, 'update');
   },
 };

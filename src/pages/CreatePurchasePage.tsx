@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTenancy } from '../contexts';
 import { useAuth } from '../contexts';
+import { useRealtimeData } from '../contexts/RealtimeDataContext';
 import { purchaseService } from '../services/purchaseService';
 import { inventoryService } from '../services/inventoryService';
 import { Supplier, Item, PurchaseLine, InventoryLocation, ItemCategory } from '../types';
@@ -49,6 +50,7 @@ const emptyItemForm: Partial<Item> = {
 export const CreatePurchasePage: React.FC = () => {
   const { currentOrg } = useTenancy();
   const { user } = useAuth();
+  const { refreshData } = useRealtimeData();
   const { success, error: notifyError } = useNotifications();
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [items, setItems] = useState<Item[]>([]);
@@ -76,6 +78,16 @@ export const CreatePurchasePage: React.FC = () => {
     if (currentOrg) {
       loadReferenceData();
     }
+  }, [currentOrg]);
+
+  useEffect(() => {
+    const handleDataChanged = () => {
+      if (currentOrg) {
+        loadReferenceData();
+      }
+    };
+    window.addEventListener('purit_data_changed', handleDataChanged);
+    return () => window.removeEventListener('purit_data_changed', handleDataChanged);
   }, [currentOrg]);
 
   const loadReferenceData = async () => {
@@ -161,6 +173,7 @@ export const CreatePurchasePage: React.FC = () => {
         userId: user.uid,
         notes
       });
+      await refreshData();
       success('Purchase recorded successfully');
       setPurchaseItems([]);
       setSelectedSupplier('');
@@ -185,6 +198,7 @@ export const CreatePurchasePage: React.FC = () => {
       setSelectedSupplier(supplier.id);
       setShowSupplierModal(false);
       setSupplierForm(emptySupplierForm);
+      await refreshData();
       success('Supplier added successfully');
     } catch (error: any) {
       console.error(error);
@@ -204,6 +218,7 @@ export const CreatePurchasePage: React.FC = () => {
       setSelectedLocation(location.id);
       setShowLocationModal(false);
       setLocationForm(emptyLocationForm);
+      await refreshData();
       success('Location added successfully');
     } catch (error: any) {
       console.error(error);
@@ -226,6 +241,7 @@ export const CreatePurchasePage: React.FC = () => {
         ...emptyItemForm,
         categoryId: categories[0]?.id || '',
       });
+      await refreshData();
       success('Item added successfully');
     } catch (error: any) {
       console.error(error);

@@ -44,6 +44,19 @@ export default function TruckStockPage() {
   }, [currentOrg, id]);
 
   useEffect(() => {
+    const handleDataChanged = (e: any) => {
+      const table = e?.detail?.table;
+      if (!table || table === 'stock_summaries' || table === 'items' || table === 'transactions') {
+        if (currentOrg && id) {
+          fetchData();
+        }
+      }
+    };
+    window.addEventListener('purit_data_changed', handleDataChanged);
+    return () => window.removeEventListener('purit_data_changed', handleDataChanged);
+  }, [currentOrg, id]);
+
+  useEffect(() => {
     if (!currentOrg || !sourceLocationId || !isLoadModalOpen) return;
     inventoryService.getStockByLocation(currentOrg.id, sourceLocationId).then(setSourceStock).catch(console.error);
   }, [currentOrg, sourceLocationId, isLoadModalOpen]);

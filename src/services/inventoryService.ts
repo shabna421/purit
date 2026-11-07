@@ -7,7 +7,7 @@ import {
   InventoryLocation,
   ItemCategory,
 } from '../types';
-import { generateId, stripUndefined } from './dbUtils';
+import { generateId, stripUndefined, notifyDataChanged } from './dbUtils';
 
 function buildBarcodeValue(itemId: string) {
   const prefix = itemId.replace(/[^a-zA-Z0-9]/g, '').slice(-4).toUpperCase() || 'ITEM';
@@ -198,6 +198,10 @@ export const inventoryService = {
       });
     }
 
+    notifyDataChanged('transactions', orgId, 'insert');
+    notifyDataChanged('items', orgId, 'update');
+    notifyDataChanged('stock_summaries', orgId, 'update');
+
     return transactionData;
   },
 
@@ -356,6 +360,8 @@ export const inventoryService = {
       throw new Error(insertError.message);
     }
 
+    notifyDataChanged('items', orgId, 'insert');
+
     return {
       ...newItem,
       barcode,
@@ -414,6 +420,8 @@ export const inventoryService = {
       console.error('Error updating item:', updateError);
       throw new Error(updateError.message);
     }
+
+    notifyDataChanged('items', orgId, 'update');
   },
 
   async deleteItem(orgId: string, itemId: string): Promise<void> {
@@ -449,6 +457,8 @@ export const inventoryService = {
         .delete()
         .eq('barcode', item.barcode);
     }
+
+    notifyDataChanged('items', orgId, 'delete');
   },
 
   async adjustItemStock(
@@ -489,6 +499,7 @@ export const inventoryService = {
       console.error('Error creating category:', error);
       throw new Error(error.message);
     }
+    notifyDataChanged('categories', orgId, 'insert');
     return newCat;
   },
 
@@ -517,6 +528,7 @@ export const inventoryService = {
       console.error('Error creating location:', error);
       throw new Error(error.message);
     }
+    notifyDataChanged('locations', orgId, 'insert');
     return newLocation;
   },
 
@@ -535,5 +547,6 @@ export const inventoryService = {
       console.error('Error updating location:', error);
       throw new Error(error.message);
     }
+    notifyDataChanged('locations', orgId, 'update');
   },
 };

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTenancy } from '../contexts';
 import { useAuth } from '../contexts';
+import { useRealtimeData } from '../contexts/RealtimeDataContext';
 import { saleService } from '../services/saleService';
 import { inventoryService } from '../services/inventoryService';
 import { Customer, Item, Sale, SaleLine, InventoryLocation, StockSummary, PaymentRecord } from '../types';
@@ -159,6 +160,7 @@ const emptyCustomerForm: Partial<Customer> = {
 export const CreateSalePage: React.FC = () => {
   const { currentOrg } = useTenancy();
   const { user } = useAuth();
+  const { refreshData } = useRealtimeData();
   const { success, error: notifyError } = useNotifications();
   const [searchParams] = useSearchParams();
   const initialLocationId = searchParams.get('locationId');
@@ -249,6 +251,20 @@ export const CreateSalePage: React.FC = () => {
         console.error('Error loading location stock:', error);
         setLocationStock([]);
       });
+  }, [currentOrg, selectedLocation]);
+
+  useEffect(() => {
+    const handleDataChanged = () => {
+      if (currentOrg) {
+        saleService.getCustomers(currentOrg.id).then(setCustomers);
+        inventoryService.getItems(currentOrg.id).then(setItems);
+        if (selectedLocation) {
+          inventoryService.getStockByLocation(currentOrg.id, selectedLocation).then(setLocationStock).catch(() => {});
+        }
+      }
+    };
+    window.addEventListener('purit_data_changed', handleDataChanged);
+    return () => window.removeEventListener('purit_data_changed', handleDataChanged);
   }, [currentOrg, selectedLocation]);
 
   useEffect(() => {
@@ -623,6 +639,7 @@ export const CreateSalePage: React.FC = () => {
         location: loc || null,
       });
 
+      await refreshData();
       success('Sale recorded successfully');
       setSaleItems([]);
       setSelectedCustomer('');
@@ -843,6 +860,7 @@ export const CreateSalePage: React.FC = () => {
       setSelectedCustomer(customer.id);
       setShowCustomerModal(false);
       setCustomerForm(emptyCustomerForm);
+      await refreshData();
       success('Customer added successfully');
     } catch (error: any) {
       console.error(error);

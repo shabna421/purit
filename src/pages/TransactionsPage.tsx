@@ -9,9 +9,19 @@ import { getItemDisplayName, getItemSkuLabel } from '../utils/items';
 
 export default function TransactionsPage() {
   const { currentOrg } = useTenancy();
-  const { transactions, items, locations, loading } = useRealtimeData();
+  const { transactions, items, locations, loading, refreshData } = useRealtimeData();
   const [searchTerm, setSearchTerm] = useState('');
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const { tableDisplayMode, setTableDisplayMode, savingTableDisplayMode } = useOrgTableDisplayMode();
+
+  const handleManualRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await refreshData();
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   const getTxIcon = (type: string) => {
     switch (type) {
@@ -71,6 +81,15 @@ export default function TransactionsPage() {
           <h2 className="text-2xl font-bold text-zinc-900">Inventory Ledger</h2>
           <p className="text-sm text-zinc-500">Audit trail of all stock movements.</p>
         </div>
+        <button
+          type="button"
+          onClick={handleManualRefresh}
+          disabled={isRefreshing}
+          className="inline-flex items-center gap-2 px-3 py-2 text-xs font-semibold rounded-xl border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 shadow-2xs transition-all disabled:opacity-50"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 text-zinc-500 ${isRefreshing ? 'animate-spin' : ''}`} />
+          <span>{isRefreshing ? 'Syncing...' : 'Sync Feed'}</span>
+        </button>
       </header>
 
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center">

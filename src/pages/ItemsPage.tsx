@@ -36,7 +36,7 @@ export default function ItemsPage() {
   const { currentOrg } = useTenancy();
   const { user } = useAuth();
   const { success, error: notifyError } = useNotifications();
-  const { items: rawItems, categories, locations, purchases, suppliers, loading } = useRealtimeData();
+  const { items: rawItems, categories, locations, purchases, suppliers, loading, refreshData } = useRealtimeData();
 
   const handlePrintInventoryReport = () => {
     if (!currentOrg) return;
@@ -184,6 +184,7 @@ export default function ItemsPage() {
       setItemForm(prev => ({ ...prev, categoryId: cat.id }));
       setNewCategoryName('');
       setShowCategoryInput(false);
+      await refreshData();
     } catch (error) {
       console.error('Error creating category:', error);
       notifyError('Failed to create category');
@@ -209,6 +210,7 @@ export default function ItemsPage() {
       }
       setIsItemModalOpen(false);
       resetItemForm();
+      await refreshData();
       success(editingItem ? 'Item updated successfully.' : 'Item created successfully.');
     } catch (error) {
       console.error('Error saving item:', error);
@@ -233,6 +235,7 @@ export default function ItemsPage() {
       });
       setIsStockModalOpen(false);
       setStockItem(null);
+      await refreshData();
       success(stockMode === 'add' ? 'Stock added successfully.' : 'Stock removed successfully.');
     } catch (error: any) {
       console.error('Error adjusting stock:', error);
@@ -249,6 +252,7 @@ export default function ItemsPage() {
     try {
       await inventoryService.deleteItem(currentOrg.id, deleteCandidate.id);
       setDeleteCandidate(null);
+      await refreshData();
       success('Item deleted successfully.');
     } catch (error) {
       console.error('Error deleting item:', error);

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useTenancy, useAuth } from '../contexts';
+import { useRealtimeData } from '../contexts/RealtimeDataContext';
 import { inventoryService } from '../services/inventoryService';
 import { Item, InventoryLocation } from '../types';
 import { Search, Trash2, Loader2, AlertTriangle } from 'lucide-react';
@@ -12,6 +13,7 @@ import { formatNumericInput, parseNumericInput } from '../utils/numbers';
 export default function DamagesPage() {
   const { currentOrg } = useTenancy();
   const { user } = useAuth();
+  const { refreshData } = useRealtimeData();
   const { success, error: notifyError } = useNotifications();
   
   const [items, setItems] = useState<Item[]>([]);
@@ -26,16 +28,28 @@ export default function DamagesPage() {
   const multiLocationEnabled = currentOrg?.settings?.multiLocationEnabled ?? false;
   const [searchTerm, setSearchTerm] = useState('');
 
-  useEffect(() => {
+  const loadData = React.useCallback(() => {
     if (currentOrg) {
       inventoryService.getItems(currentOrg.id, { includeDeleted: true }).then(setItems);
       inventoryService.getLocations(currentOrg.id).then(locs => {
         setLocations(locs);
         const def = locs.find(l => l.isDefault || l.type === 'warehouse');
-        if (def) setSelectedLocation(def.id);
+        if (def && !selectedLocation) setSelectedLocation(def.id);
       });
     }
-  }, [currentOrg]);
+  }, [currentOrg, selectedLocation]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  useEffect(() => {
+    const handleDataChanged = () => {
+      loadData();
+    };
+    window.addEventListener('purit_data_changed', handleDataChanged);
+    return () => window.removeEventListener('purit_data_changed', handleDataChanged);
+  }, [loadData]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -51,6 +65,8 @@ export default function DamagesPage() {
         notes: `Damage Logged: ${reason}. ${notes}`
       });
       
+      await refreshData();
+      loadData();
       success('Damage logged successfully. Stock removed.');
       setSelectedItem(null);
       setQuantity('');

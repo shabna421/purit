@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useTenancy } from '../contexts';
 import { useAuth } from '../contexts';
 import { useRealtimeData } from '../contexts/RealtimeDataContext';
@@ -56,10 +56,11 @@ const emptyCustomerForm: Partial<Customer> = {
 };
 
 export default function CustomersPage() {
+  const navigate = useNavigate();
   const { currentOrg } = useTenancy();
   const { user } = useAuth();
   const { success, error: notifyError } = useNotifications();
-  const { customers, loading, sales, items } = useRealtimeData();
+  const { customers, loading, sales, items, payments, refreshData } = useRealtimeData();
   const productCatalogMap = useMemo(() => new Map((items || []).map((i) => [i.id, i])), [items]);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
@@ -297,6 +298,7 @@ export default function CustomersPage() {
       setIsModalOpen(false);
       setCustomerForm(emptyCustomerForm);
       setEditingCustomer(null);
+      await refreshData();
       success(editingCustomer ? 'Customer updated successfully' : 'Customer created successfully');
     } catch (error) {
       console.error('Error saving customer:', error);
@@ -353,6 +355,7 @@ export default function CustomersPage() {
     setIsSubmitting(true);
     try {
       await saleService.deleteCustomer(currentOrg.id, customer.id);
+      await refreshData();
       success('Customer deleted successfully');
     } catch (error: any) {
       console.error('Error deleting customer:', error);
@@ -382,6 +385,7 @@ export default function CustomersPage() {
         notes: balanceNotes,
       });
       closeBalanceModal();
+      await refreshData();
       success(
         balanceAction === 'add-due'
           ? 'Customer due increased successfully'
@@ -442,12 +446,16 @@ export default function CustomersPage() {
         ) : (
           filteredCustomers.map((customer) => {
             const custSales = sales?.filter((s) => s.customerId === customer.id) || [];
+            const custPayments = (payments || []).filter((p) => p.entityType === 'customer' && p.entityId === customer.id);
             const realTotalSales = custSales.reduce((sum, s) => sum + (s.totalAmount || 0), 0);
-            const realCollected = custSales.reduce((sum, s) => sum + (s.paidAmount || 0), 0);
+            const upfrontCollected = custSales.reduce((sum, s) => sum + (s.paidAmount || 0), 0);
+            const manualCollected = custPayments
+              .filter((p) => p.direction === 'payment_received')
+              .reduce((sum, p) => sum + (p.amount || 0), 0);
             const dueVal = customer.balance || 0;
 
             const totalSalesVal = realTotalSales;
-            const collectedVal = Math.max(realCollected, Math.max(0, totalSalesVal - dueVal));
+            const collectedVal = Math.max(upfrontCollected + manualCollected, Math.max(0, totalSalesVal - dueVal));
 
             // Find all dispenser records assigned to this customer in Dispensers inventory
             const custDispensers = dispenserRecords.filter((d) => {
@@ -544,7 +552,16 @@ export default function CustomersPage() {
             return (
               <div
                 key={customer.id}
-                className="bg-white border border-zinc-200/90 rounded-[28px] p-6 shadow-sm hover:shadow-md transition-all flex flex-col gap-4 group"
+                onClick={() => navigate(`/customers/${customer.id}`)}
+                className="bg-white border border-zinc-200/90 rounded-[28px] p-6 shadow-sm hover:shadow-md hover:border-orange-300 transition-all flex flex-col gap-4 group cursor-pointer relative"
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    navigate(`/customers/${customer.id}`);
+                  }
+                }}
               >
                 {/* Header */}
                 <div className="flex flex-col gap-3">
@@ -554,7 +571,7 @@ export default function CustomersPage() {
                         <User className="w-5 h-5 stroke-[2]" />
                       </div>
                       <div className="min-w-0 flex-1">
-                        <h3 className="text-xl font-bold text-zinc-900 tracking-tight leading-snug break-words">
+                        <h3 className="text-xl font-bold text-zinc-900 tracking-tight leading-snug break-words group-hover:text-orange-600 transition-colors">
                           {customer.name}
                         </h3>
                         <p className="text-sm text-zinc-400 font-medium mt-0.5 truncate">
@@ -649,7 +666,10 @@ export default function CustomersPage() {
                     <div className="flex items-center justify-between gap-2 mt-2 pt-1">
                       <button
                         type="button"
-                        onClick={() => updateDispenser(customer.id, 'td', -1)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          updateDispenser(customer.id, 'td', -1);
+                        }}
                         disabled={tdCount <= 0}
                         className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-blue-100/80 hover:bg-blue-200 text-blue-600 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center text-sm sm:text-base font-bold transition-all shadow-2xs shrink-0"
                         title="Decrease Tissue Dispenser"
@@ -661,7 +681,10 @@ export default function CustomersPage() {
                       </span>
                       <button
                         type="button"
-                        onClick={() => updateDispenser(customer.id, 'td', 1)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          updateDispenser(customer.id, 'td', 1);
+                        }}
                         className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-blue-100/80 hover:bg-blue-200 text-blue-600 flex items-center justify-center text-sm sm:text-base font-bold transition-all shadow-2xs shrink-0"
                         title="Add Tissue Dispenser"
                       >
@@ -689,7 +712,10 @@ export default function CustomersPage() {
                     <div className="flex items-center justify-between gap-2 mt-2 pt-1">
                       <button
                         type="button"
-                        onClick={() => updateDispenser(customer.id, 'fhb', -1)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          updateDispenser(customer.id, 'fhb', -1);
+                        }}
                         disabled={fhbCount <= 0}
                         className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-emerald-100/80 hover:bg-emerald-200 text-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center text-sm sm:text-base font-bold transition-all shadow-2xs shrink-0"
                         title="Decrease Foam Hand Wash Dispenser"
@@ -701,7 +727,10 @@ export default function CustomersPage() {
                       </span>
                       <button
                         type="button"
-                        onClick={() => updateDispenser(customer.id, 'fhb', 1)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          updateDispenser(customer.id, 'fhb', 1);
+                        }}
                         className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-emerald-100/80 hover:bg-emerald-200 text-emerald-600 flex items-center justify-center text-sm sm:text-base font-bold transition-all shadow-2xs shrink-0"
                         title="Add Foam Hand Wash Dispenser"
                       >
@@ -817,14 +846,18 @@ export default function CustomersPage() {
                   <div className="grid grid-cols-2 gap-2.5">
                     <Link
                       to={`/customers/${customer.id}`}
+                      onClick={(e) => e.stopPropagation()}
                       className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-50 px-3 py-2.5 text-xs font-semibold text-blue-700 hover:bg-blue-100 transition-colors text-center"
                     >
                       <FileText className="w-3.5 h-3.5 shrink-0" />
-                      <span>Balance History</span>
+                      <span>Balance History / Ledger</span>
                     </Link>
                     <button
                       type="button"
-                      onClick={() => openLedgerModal(customer)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openLedgerModal(customer);
+                      }}
                       className="inline-flex items-center justify-center gap-2 rounded-xl bg-purple-50 px-3 py-2.5 text-xs font-semibold text-purple-700 hover:bg-purple-100 transition-colors text-center"
                     >
                       <BookOpen className="w-3.5 h-3.5 shrink-0" />
@@ -835,7 +868,10 @@ export default function CustomersPage() {
                   {/* Primary Action: Collect Payment */}
                   <button
                     type="button"
-                    onClick={() => openBalanceModal(customer, 'collect-payment')}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openBalanceModal(customer, 'collect-payment');
+                    }}
                     className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200/60 px-4 py-2.5 text-xs sm:text-sm font-semibold text-emerald-700 transition-colors"
                   >
                     <HandCoins className="w-4 h-4 shrink-0 text-emerald-600" />
@@ -846,7 +882,10 @@ export default function CustomersPage() {
                   <div className="grid grid-cols-2 gap-2.5">
                     <button
                       type="button"
-                      onClick={() => openBalanceModal(customer, 'add-due')}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openBalanceModal(customer, 'add-due');
+                      }}
                       className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-50/90 px-3 py-2.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 transition-colors"
                     >
                       <Wallet className="w-3.5 h-3.5 shrink-0" />
@@ -854,7 +893,10 @@ export default function CustomersPage() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => openBalanceModal(customer, 'write-off')}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openBalanceModal(customer, 'write-off');
+                      }}
                       disabled={customer.balance <= 0}
                       className="inline-flex items-center justify-center gap-2 rounded-xl bg-zinc-100 px-3 py-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-200 disabled:opacity-50 transition-colors"
                     >
