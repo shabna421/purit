@@ -522,7 +522,7 @@ export default function CustomersPage() {
               ? custFhbRecord.totalAmount
               : fhbCount * fhbUnitPrice;
 
-            const dispenserCostVal = tdCost + fhbCost + otherDispensersCost;
+            const dispenserCostVal = Math.round((tdCost + fhbCost + otherDispensersCost) * 100) / 100;
 
             let profitVal = 0;
             custSales.forEach((s) => {
@@ -533,8 +533,9 @@ export default function CustomersPage() {
                 profitVal += (rev - cost);
               });
             });
+            profitVal = Math.round(profitVal * 100) / 100;
 
-            const netProfitVal = profitVal - dispenserCostVal;
+            const netProfitVal = Math.round((profitVal - dispenserCostVal) * 100) / 100;
 
             const formatStat = (amount: number) =>
               formatStatCurrency(amount, currentOrg?.settings.currency);
@@ -790,57 +791,80 @@ export default function CustomersPage() {
                 </div>
 
                 {/* STATUS Panel */}
-                <div className="bg-[#f4faf6] border border-emerald-100/80 rounded-2xl p-3.5 sm:p-4 space-y-2">
+                <div className="bg-[#f4faf6] border border-emerald-100/80 rounded-2xl px-3 py-3 sm:p-3.5 space-y-2">
                   <span className="text-[10px] font-bold tracking-wider text-zinc-400 uppercase block">STATUS</span>
-                  <div className="grid grid-cols-3 gap-2 sm:gap-3 items-stretch">
+                  <div className="grid grid-cols-3 gap-2 items-start">
                     {/* Profit */}
-                    <div className="flex items-start gap-1.5 min-w-0 h-full">
-                      <div className="w-5 h-5 rounded-full bg-emerald-100/80 text-emerald-700 flex items-center justify-center shrink-0 mt-0.5">
-                        <CircleDollarSign className="w-2.5 h-2.5" />
-                      </div>
-                      <div className="min-w-0 flex-1 flex flex-col justify-between h-full">
-                        <div className="min-h-[28px] sm:min-h-[32px] flex flex-col justify-start">
-                          <p className="text-[11px] text-zinc-500 font-medium leading-tight">Profit</p>
+                    <div className="flex flex-col items-start min-w-0">
+                      <div className="min-h-[28px] sm:min-h-[32px] flex flex-col justify-start items-start w-full">
+                        <div className="flex items-center gap-1 sm:gap-1.5 min-w-0">
+                          <div className="w-3.5 h-3.5 sm:w-4 sm:h-4 rounded-full bg-emerald-100/80 text-emerald-700 flex items-center justify-center shrink-0">
+                            <CircleDollarSign className="w-2 sm:w-2.5 h-2 sm:h-2.5" />
+                          </div>
+                          <p className="text-[10px] min-[360px]:text-[11px] text-zinc-500 font-medium leading-tight whitespace-nowrap">
+                            Profit
+                          </p>
                         </div>
-                        <p className="text-base sm:text-lg md:text-xl font-bold text-zinc-900 tracking-tight mt-1 whitespace-nowrap">
-                          {formatStat(profitVal)}
-                        </p>
                       </div>
+                      <p
+                        title={formatStat(profitVal)}
+                        className="text-xs min-[360px]:text-sm sm:text-base font-bold text-zinc-900 tracking-tight mt-1 whitespace-nowrap"
+                      >
+                        {formatStat(profitVal)}
+                      </p>
                     </div>
 
                     {/* Dispenser Cost */}
-                    <div className="flex items-start gap-1.5 min-w-0 h-full">
-                      <div className="w-5 h-5 rounded-full bg-zinc-200/80 text-zinc-600 flex items-center justify-center shrink-0 mt-0.5">
-                        <CreditCard className="w-2.5 h-2.5" />
-                      </div>
-                      <div className="min-w-0 flex-1 flex flex-col justify-between h-full">
-                        <div className="min-h-[28px] sm:min-h-[32px] flex flex-col justify-start">
-                          <p className="text-[11px] text-zinc-500 font-medium leading-tight">Dispenser Cost</p>
+                    <div className="flex flex-col items-start min-w-0">
+                      <div className="min-h-[28px] sm:min-h-[32px] flex flex-col justify-start items-start w-full">
+                        <div className="flex items-center gap-1 sm:gap-1.5 min-w-0">
+                          <div className="w-3.5 h-3.5 sm:w-4 sm:h-4 rounded-full bg-zinc-200/80 text-zinc-600 flex items-center justify-center shrink-0">
+                            <CreditCard className="w-2 sm:w-2.5 h-2 sm:h-2.5" />
+                          </div>
+                          <p className="text-[10px] min-[360px]:text-[11px] text-zinc-500 font-medium leading-tight">
+                            Dispenser Cost
+                          </p>
                         </div>
-                        <p className="text-base sm:text-lg md:text-xl font-bold text-zinc-900 tracking-tight mt-1 whitespace-nowrap">
-                          {dispenserCostVal > 0 ? `-${formatStat(dispenserCostVal)}` : formatStat(0)}
-                        </p>
                       </div>
+                      <p
+                        title={dispenserCostVal > 0 ? `-${formatStat(dispenserCostVal)}` : formatStat(0)}
+                        className="text-xs min-[360px]:text-sm sm:text-base font-bold text-zinc-900 tracking-tight mt-1 whitespace-nowrap"
+                      >
+                        {dispenserCostVal > 0 ? `-${formatStat(dispenserCostVal)}` : formatStat(0)}
+                      </p>
                     </div>
 
                     {/* Net Status */}
-                    <div className="flex items-start gap-1.5 min-w-0 h-full">
-                      <div className="w-5 h-5 rounded-full bg-emerald-100/80 text-emerald-700 flex items-center justify-center shrink-0 mt-0.5">
-                        <BarChart2 className="w-2.5 h-2.5" />
-                      </div>
-                      <div className="min-w-0 flex-1 flex flex-col justify-between h-full">
-                        <div className="min-h-[28px] sm:min-h-[32px] flex flex-col justify-start">
-                          <p className="text-[11px] text-zinc-500 font-medium leading-tight whitespace-nowrap">
+                    <div className="text-right flex flex-col items-end min-w-0">
+                      <div className="min-h-[28px] sm:min-h-[32px] flex flex-col justify-start items-end text-right w-full">
+                        <div className="flex items-center justify-end gap-1 sm:gap-1.5 min-w-0">
+                          <div
+                            className={`w-3.5 h-3.5 sm:w-4 sm:h-4 rounded-full flex items-center justify-center shrink-0 ${
+                              netProfitVal >= 0 ? 'bg-emerald-100/80 text-emerald-700' : 'bg-rose-100/80 text-rose-700'
+                            }`}
+                          >
+                            <BarChart2 className="w-2 sm:w-2.5 h-2 sm:h-2.5" />
+                          </div>
+                          <p className="text-[10px] min-[360px]:text-[11px] text-zinc-500 font-medium leading-tight whitespace-nowrap">
                             Net Status
                           </p>
-                          <p className={`text-[10px] font-semibold ${netProfitVal >= 0 ? 'text-emerald-600' : 'text-rose-600'} leading-tight mt-0.5 whitespace-nowrap`}>
-                            {netProfitVal >= 0 ? 'Net Profit' : 'Net Loss'}
-                          </p>
                         </div>
-                        <p className={`text-base sm:text-lg md:text-xl font-bold ${netProfitVal >= 0 ? 'text-emerald-600' : 'text-rose-600'} tracking-tight mt-1 whitespace-nowrap`}>
-                          {formatStat(netProfitVal)}
+                        <p
+                          className={`text-[9px] min-[360px]:text-[10px] font-semibold ${
+                            netProfitVal >= 0 ? 'text-emerald-600' : 'text-rose-600'
+                          } leading-tight mt-0.5 whitespace-nowrap`}
+                        >
+                          {netProfitVal >= 0 ? 'Net Profit' : 'Net Loss'}
                         </p>
                       </div>
+                      <p
+                        title={formatStat(netProfitVal)}
+                        className={`text-xs min-[360px]:text-sm sm:text-base font-bold ${
+                          netProfitVal >= 0 ? 'text-emerald-600' : 'text-rose-600'
+                        } tracking-tight mt-1 whitespace-nowrap text-right`}
+                      >
+                        {formatStat(netProfitVal)}
+                      </p>
                     </div>
                   </div>
                 </div>

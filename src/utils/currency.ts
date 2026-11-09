@@ -16,19 +16,24 @@ export function formatCurrency(amount: number, currencyCode = 'INR') {
 
 export function formatStatCurrency(amount: number, currencyCode = 'INR') {
   const locale = currencyCode === 'INR' ? 'en-IN' : 'en';
+  const num = Number(amount) || 0;
+  const rounded2Dec = Math.round(num * 100) / 100;
+  const isWhole = Math.abs(rounded2Dec % 1) < 0.001;
 
   try {
     return new Intl.NumberFormat(locale, {
       style: 'currency',
       currency: currencyCode,
       currencyDisplay: 'narrowSymbol',
-      minimumFractionDigits: amount % 1 === 0 ? 0 : 2,
-      maximumFractionDigits: amount % 1 === 0 ? 0 : 2,
-    }).format(amount);
+      minimumFractionDigits: isWhole ? 0 : 2,
+      maximumFractionDigits: isWhole ? 0 : 2,
+    }).format(rounded2Dec);
   } catch {
     const symbol = currencyCode === 'INR' ? '₹' : `${currencyCode} `;
-    const rounded = Math.round(Math.abs(amount)).toLocaleString(locale);
-    return amount < 0 ? `-${symbol}${rounded}` : `${symbol}${rounded}`;
+    const rounded = isWhole
+      ? Math.round(Math.abs(rounded2Dec)).toLocaleString(locale)
+      : Math.abs(rounded2Dec).toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return rounded2Dec < 0 ? `-${symbol}${rounded}` : `${symbol}${rounded}`;
   }
 }
 
