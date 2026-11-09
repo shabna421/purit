@@ -27,7 +27,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { formatCurrency } from '../utils/currency';
+import { formatCurrency, formatStatCurrency } from '../utils/currency';
 import { saleService } from '../services/saleService';
 import { inventoryService } from '../services/inventoryService';
 import {
@@ -549,29 +549,29 @@ export function CustomerLedgerModal({
 
                 {/* Quick Summary Cards */}
                 {ledgerData && (
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                    <div className="rounded-xl border border-zinc-200 bg-white p-2.5 shadow-sm">
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Opening Bal</p>
-                      <p className="mt-0.5 text-sm font-bold text-zinc-800">
-                        {formatCurrency(ledgerData.openingBalance, currentOrg.settings.currency)}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-2.5">
+                    <div className="rounded-xl border border-zinc-200 bg-white p-2 sm:p-2.5 shadow-sm min-w-0">
+                      <p className="text-[9px] min-[380px]:text-[10px] font-bold uppercase tracking-wider text-zinc-400 whitespace-nowrap">Opening Bal</p>
+                      <p className="mt-0.5 text-[11px] min-[380px]:text-xs sm:text-sm font-bold text-zinc-800 font-mono tracking-tight whitespace-nowrap">
+                        {formatStatCurrency(ledgerData.openingBalance, currentOrg.settings.currency)}
                       </p>
                     </div>
-                    <div className="rounded-xl border border-orange-200 bg-orange-50/50 p-2.5 shadow-sm">
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-orange-700">Total Billed</p>
-                      <p className="mt-0.5 text-sm font-bold text-orange-600">
-                        {formatCurrency(ledgerData.periodTotalBilled, currentOrg.settings.currency)}
+                    <div className="rounded-xl border border-orange-200 bg-orange-50/50 p-2 sm:p-2.5 shadow-sm min-w-0">
+                      <p className="text-[9px] min-[380px]:text-[10px] font-bold uppercase tracking-wider text-orange-700 whitespace-nowrap">Total Billed</p>
+                      <p className="mt-0.5 text-[11px] min-[380px]:text-xs sm:text-sm font-bold text-orange-600 font-mono tracking-tight whitespace-nowrap">
+                        {formatStatCurrency(ledgerData.periodTotalBilled, currentOrg.settings.currency)}
                       </p>
                     </div>
-                    <div className="rounded-xl border border-green-200 bg-green-50/50 p-2.5 shadow-sm">
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-green-700">Total Paid</p>
-                      <p className="mt-0.5 text-sm font-bold text-green-600">
-                        {formatCurrency(ledgerData.periodTotalPaid, currentOrg.settings.currency)}
+                    <div className="rounded-xl border border-green-200 bg-green-50/50 p-2 sm:p-2.5 shadow-sm min-w-0">
+                      <p className="text-[9px] min-[380px]:text-[10px] font-bold uppercase tracking-wider text-green-700 whitespace-nowrap">Total Paid</p>
+                      <p className="mt-0.5 text-[11px] min-[380px]:text-xs sm:text-sm font-bold text-green-600 font-mono tracking-tight whitespace-nowrap">
+                        {formatStatCurrency(ledgerData.periodTotalPaid, currentOrg.settings.currency)}
                       </p>
                     </div>
-                    <div className="rounded-xl border border-red-200 bg-red-50/50 p-2.5 shadow-sm">
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-red-700">Balance Due</p>
-                      <p className="mt-0.5 text-sm font-bold text-red-600">
-                        {formatCurrency(ledgerData.finalBalance, currentOrg.settings.currency)}
+                    <div className="rounded-xl border border-red-200 bg-red-50/50 p-2 sm:p-2.5 shadow-sm min-w-0">
+                      <p className="text-[9px] min-[380px]:text-[10px] font-bold uppercase tracking-wider text-red-700 whitespace-nowrap">Balance Due</p>
+                      <p className="mt-0.5 text-[11px] min-[380px]:text-xs sm:text-sm font-bold text-red-600 font-mono tracking-tight whitespace-nowrap">
+                        {formatStatCurrency(ledgerData.finalBalance, currentOrg.settings.currency)}
                       </p>
                     </div>
                   </div>

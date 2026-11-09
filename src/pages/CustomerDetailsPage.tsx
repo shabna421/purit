@@ -44,7 +44,7 @@ import { useRealtimeData } from '../contexts/RealtimeDataContext';
 import { saleService } from '../services/saleService';
 import { inventoryService } from '../services/inventoryService';
 import { Customer, PaymentRecord, Sale, CustomerReturn, Item } from '../types';
-import { formatCurrency } from '../utils/currency';
+import { formatCurrency, formatStatCurrency } from '../utils/currency';
 import { formatNumericInput, parseNumericInput } from '../utils/numbers';
 import {
   downloadExcelWorkbook,
@@ -1139,85 +1139,103 @@ export default function CustomerDetailsPage() {
       {/* ------------------------------------------------------------- */}
       {/* Customer Summary Metric Totals Cards (Live Recalculation)     */}
       {/* ------------------------------------------------------------- */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-        {/* 1. Due / Balance */}
-        <div className="rounded-2xl border border-zinc-200/80 bg-white p-3.5 sm:p-4 shadow-xs hover:border-zinc-300 transition-all flex flex-col justify-between min-w-0 flex-1">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3 lg:gap-4">
+        {/* 1. Total Sales (Full-width top highlight card on mobile) */}
+        <div className="col-span-2 lg:col-span-1 rounded-2xl border border-zinc-200/80 bg-white p-2.5 sm:p-4 shadow-xs hover:border-blue-200 transition-all flex flex-col justify-between min-w-0">
           <div className="flex items-center justify-between gap-1.5 min-w-0">
-            <span className="text-[10px] sm:text-xs font-semibold uppercase tracking-wider text-zinc-400 truncate">
-              Due / Balance
+            <div className="flex items-center gap-1 sm:gap-1.5 min-w-0">
+              <div className="w-5 h-5 sm:w-7 sm:h-7 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                <ShoppingCart className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+              </div>
+              <span className="text-[9px] min-[380px]:text-[10px] sm:text-xs font-semibold uppercase tracking-wider text-zinc-500 whitespace-nowrap">
+                Total Sales
+              </span>
+            </div>
+            <span className="text-[10px] sm:text-xs text-zinc-400 whitespace-nowrap">
+              {sales.length} total invoice{sales.length === 1 ? '' : 's'}
             </span>
-            <div
-              className={`w-6 h-6 sm:w-7 sm:h-7 rounded-xl flex items-center justify-center shrink-0 ${
-                summaryMetrics.due > 0 ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'
-              }`}
+          </div>
+          <div className="mt-2 sm:mt-3 min-w-0">
+            <p
+              title={formatStatCurrency(summaryMetrics.totalSales, currentOrg.settings.currency)}
+              className="text-[11px] min-[380px]:text-xs sm:text-sm lg:text-base font-bold tracking-tight text-zinc-900 font-mono whitespace-nowrap"
             >
-              <Clock className="w-3.5 h-3.5" />
+              {formatStatCurrency(summaryMetrics.totalSales, currentOrg.settings.currency)}
+            </p>
+            <p className="mt-0.5 sm:mt-1 text-[10px] sm:text-xs text-zinc-400 whitespace-nowrap">
+              Active sales revenue
+            </p>
+          </div>
+        </div>
+
+        {/* 2. Collected (Side-by-side on mobile) */}
+        <div className="col-span-1 rounded-2xl border border-zinc-200/80 bg-white p-2.5 sm:p-4 shadow-xs hover:border-emerald-200 transition-all flex flex-col justify-between min-w-0">
+          <div className="flex items-center justify-between gap-1 sm:gap-1.5 min-w-0">
+            <div className="flex items-center gap-1 sm:gap-1.5 min-w-0">
+              <div className="w-5 h-5 sm:w-7 sm:h-7 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+                <Coins className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+              </div>
+              <span className="text-[9px] min-[380px]:text-[10px] sm:text-xs font-semibold uppercase tracking-wider text-zinc-500 whitespace-nowrap">
+                Collected
+              </span>
             </div>
           </div>
-          <div className="mt-2.5 sm:mt-3 min-w-0">
+          <div className="mt-2 sm:mt-3 min-w-0">
             <p
-              title={formatCurrency(summaryMetrics.due, currentOrg.settings.currency)}
-              className={`text-sm sm:text-base font-bold tracking-tight font-mono truncate ${
+              title={formatStatCurrency(summaryMetrics.collected, currentOrg.settings.currency)}
+              className="text-[11px] min-[380px]:text-xs sm:text-sm lg:text-base font-bold tracking-tight text-emerald-600 font-mono whitespace-nowrap"
+            >
+              {formatStatCurrency(summaryMetrics.collected, currentOrg.settings.currency)}
+            </p>
+            <p className="mt-0.5 sm:mt-1 text-[10px] sm:text-xs text-zinc-400 whitespace-nowrap">
+              Payments received
+            </p>
+          </div>
+        </div>
+
+        {/* 3. Due (Side-by-side on mobile) */}
+        <div className="col-span-1 rounded-2xl border border-zinc-200/80 bg-white p-2.5 sm:p-4 shadow-xs hover:border-rose-200 transition-all flex flex-col justify-between min-w-0">
+          <div className="flex items-center justify-between gap-1 sm:gap-1.5 min-w-0">
+            <div className="flex items-center gap-1 sm:gap-1.5 min-w-0">
+              <div
+                className={`w-5 h-5 sm:w-7 sm:h-7 rounded-xl flex items-center justify-center shrink-0 ${
+                  summaryMetrics.due > 0 ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'
+                }`}
+              >
+                <Clock className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+              </div>
+              <span className="text-[9px] min-[380px]:text-[10px] sm:text-xs font-semibold uppercase tracking-wider text-zinc-500 whitespace-nowrap">
+                Due
+              </span>
+            </div>
+          </div>
+          <div className="mt-2 sm:mt-3 min-w-0">
+            <p
+              title={formatStatCurrency(summaryMetrics.due, currentOrg.settings.currency)}
+              className={`text-[11px] min-[380px]:text-xs sm:text-sm lg:text-base font-bold tracking-tight font-mono whitespace-nowrap ${
                 summaryMetrics.due > 0 ? 'text-rose-600' : 'text-emerald-600'
               }`}
             >
-              {formatCurrency(summaryMetrics.due, currentOrg.settings.currency)}
+              {formatStatCurrency(summaryMetrics.due, currentOrg.settings.currency)}
             </p>
-            <p className="mt-1 text-[10px] sm:text-xs text-zinc-400 truncate">
-              {summaryMetrics.due > 0 ? 'Live outstanding credit' : 'All balance cleared'}
+            <p className="mt-0.5 sm:mt-1 text-[10px] sm:text-xs text-zinc-400 whitespace-nowrap">
+              {summaryMetrics.due > 0 ? 'Live balance due' : 'All cleared'}
             </p>
-          </div>
-        </div>
-
-        {/* 2. Total Sales */}
-        <div className="rounded-2xl border border-zinc-200/80 bg-white p-3.5 sm:p-4 shadow-xs hover:border-zinc-300 transition-all flex flex-col justify-between min-w-0 flex-1">
-          <div className="flex items-center justify-between gap-1.5 min-w-0">
-            <span className="text-[10px] sm:text-xs font-semibold uppercase tracking-wider text-zinc-400 truncate">
-              Total Sales
-            </span>
-            <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
-              <ShoppingCart className="w-3.5 h-3.5" />
-            </div>
-          </div>
-          <div className="mt-2.5 sm:mt-3 min-w-0">
-            <p
-              title={formatCurrency(summaryMetrics.totalSales, currentOrg.settings.currency)}
-              className="text-sm sm:text-base font-bold tracking-tight text-zinc-900 font-mono truncate"
-            >
-              {formatCurrency(summaryMetrics.totalSales, currentOrg.settings.currency)}
-            </p>
-            <p className="mt-1 text-[10px] sm:text-xs text-zinc-400 truncate">
-              {sales.length} total invoice{sales.length === 1 ? '' : 's'}
-            </p>
-          </div>
-        </div>
-
-        {/* 3. Collected */}
-        <div className="rounded-2xl border border-zinc-200/80 bg-white p-3.5 sm:p-4 shadow-xs hover:border-zinc-300 transition-all flex flex-col justify-between min-w-0 flex-1">
-          <div className="flex items-center justify-between gap-1.5 min-w-0">
-            <span className="text-[10px] sm:text-xs font-semibold uppercase tracking-wider text-zinc-400 truncate">
-              Collected
-            </span>
-            <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
-              <Coins className="w-3.5 h-3.5" />
-            </div>
-          </div>
-          <div className="mt-2.5 sm:mt-3 min-w-0">
-            <p
-              title={formatCurrency(summaryMetrics.collected, currentOrg.settings.currency)}
-              className="text-sm sm:text-base font-bold tracking-tight text-emerald-600 font-mono truncate"
-            >
-              {formatCurrency(summaryMetrics.collected, currentOrg.settings.currency)}
-            </p>
-            <p className="mt-1 text-[10px] sm:text-xs text-zinc-400 truncate">Payments & collections received</p>
           </div>
         </div>
 
         {/* 4. Net Status */}
-        <div className="rounded-2xl border border-zinc-200/80 bg-white p-3.5 sm:p-4 shadow-xs hover:border-zinc-300 transition-all flex flex-col justify-between min-w-0 flex-1">
+        <div className="col-span-2 lg:col-span-1 rounded-2xl border border-zinc-200/80 bg-white p-2.5 sm:p-4 shadow-xs hover:border-zinc-300 transition-all flex flex-col justify-between min-w-0">
           <div className="flex items-center justify-between gap-1.5 min-w-0">
-            <div className="flex items-center gap-1.5 min-w-0 truncate">
-              <span className="text-[10px] sm:text-xs font-semibold uppercase tracking-wider text-zinc-400 truncate">
+            <div className="flex items-center gap-1 sm:gap-1.5 min-w-0">
+              <div
+                className={`w-5 h-5 sm:w-7 sm:h-7 rounded-xl flex items-center justify-center shrink-0 ${
+                  summaryMetrics.netProfit >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'
+                }`}
+              >
+                <BarChart2 className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+              </div>
+              <span className="text-[9px] min-[380px]:text-[10px] sm:text-xs font-semibold uppercase tracking-wider text-zinc-500 whitespace-nowrap">
                 Net Status
               </span>
               <span
@@ -1230,27 +1248,20 @@ export default function CustomerDetailsPage() {
                 {summaryMetrics.netProfit >= 0 ? 'Profit' : 'Loss'}
               </span>
             </div>
-            <div
-              className={`w-6 h-6 sm:w-7 sm:h-7 rounded-xl flex items-center justify-center shrink-0 ${
-                summaryMetrics.netProfit >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'
-              }`}
-            >
-              <BarChart2 className="w-3.5 h-3.5" />
-            </div>
           </div>
-          <div className="mt-2.5 sm:mt-3 min-w-0">
+          <div className="mt-2 sm:mt-3 min-w-0">
             <p
-              title={formatCurrency(summaryMetrics.netProfit, currentOrg.settings.currency)}
-              className={`text-sm sm:text-base font-bold tracking-tight font-mono truncate ${
+              title={formatStatCurrency(summaryMetrics.netProfit, currentOrg.settings.currency)}
+              className={`text-[11px] min-[380px]:text-xs sm:text-sm lg:text-base font-bold tracking-tight font-mono whitespace-nowrap ${
                 summaryMetrics.netProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'
               }`}
             >
-              {formatCurrency(summaryMetrics.netProfit, currentOrg.settings.currency)}
+              {formatStatCurrency(summaryMetrics.netProfit, currentOrg.settings.currency)}
             </p>
-            <p className="mt-1 text-[10px] sm:text-xs text-zinc-400 truncate">
-              Profit {formatCurrency(summaryMetrics.profit, currentOrg.settings.currency)}
+            <p className="mt-0.5 sm:mt-1 text-[10px] sm:text-xs text-zinc-400 whitespace-nowrap">
+              Profit {formatStatCurrency(summaryMetrics.profit, currentOrg.settings.currency)}
               {summaryMetrics.dispenserCost > 0 &&
-                ` • Disp -${formatCurrency(summaryMetrics.dispenserCost, currentOrg.settings.currency)}`}
+                ` • Disp -${formatStatCurrency(summaryMetrics.dispenserCost, currentOrg.settings.currency)}`}
             </p>
           </div>
         </div>
@@ -1536,14 +1547,14 @@ export default function CustomerDetailsPage() {
                     <div className="text-left sm:text-right min-w-0">
                       {/* Amount with (+ / -) color coding */}
                       <p
-                        className={`text-base sm:text-lg font-bold font-mono tracking-tight truncate ${entry.amountClass}`}
+                        className={`text-base sm:text-lg font-bold font-mono tracking-tight whitespace-nowrap ${entry.amountClass}`}
                         title={`${entry.displaySign}${formatCurrency(entry.amount, currentOrg.settings.currency)}`}
                       >
                         {entry.displaySign}
                         {formatCurrency(entry.amount, currentOrg.settings.currency)}
                       </p>
                       {entry.balanceAfter !== null && (
-                        <p className="text-[11px] sm:text-xs text-zinc-400 mt-0.5 font-mono truncate">
+                        <p className="text-[11px] sm:text-xs text-zinc-400 mt-0.5 font-mono whitespace-nowrap">
                           Balance after: {formatCurrency(entry.balanceAfter, currentOrg.settings.currency)}
                         </p>
                       )}

@@ -14,7 +14,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { format, startOfMonth, endOfMonth, subMonths, parseISO, startOfDay, endOfDay } from 'date-fns';
 import { useNotifications } from '../notifications';
-import { formatCurrency } from '../utils/currency';
+import { formatCurrency, formatStatCurrency } from '../utils/currency';
 import { formatNumericInput, parseNumericInput } from '../utils/numbers';
 import { CustomerLedgerModal } from '../components/CustomerLedgerModal';
 import SuperDeleteConfirmModal from '../components/SuperDeleteConfirmModal';
@@ -536,24 +536,14 @@ export default function CustomersPage() {
 
             const netProfitVal = profitVal - dispenserCostVal;
 
-            const formatStat = (amount: number) => {
-              try {
-                return new Intl.NumberFormat(currentOrg?.settings.currency === 'INR' ? 'en-IN' : 'en', {
-                  style: 'currency',
-                  currency: currentOrg?.settings.currency || 'INR',
-                  currencyDisplay: 'narrowSymbol',
-                  maximumFractionDigits: 0,
-                }).format(amount);
-              } catch {
-                return `₹${Math.round(amount).toLocaleString()}`;
-              }
-            };
+            const formatStat = (amount: number) =>
+              formatStatCurrency(amount, currentOrg?.settings.currency);
 
             return (
               <div
                 key={customer.id}
                 onClick={() => navigate(`/customers/${customer.id}`)}
-                className="bg-white border border-zinc-200/90 rounded-[28px] p-6 shadow-sm hover:shadow-md hover:border-orange-300 transition-all flex flex-col gap-4 group cursor-pointer relative"
+                className="bg-white border border-zinc-200/90 rounded-[28px] p-4 sm:p-6 shadow-sm hover:shadow-md hover:border-orange-300 transition-all flex flex-col gap-4 group cursor-pointer relative"
                 role="button"
                 tabIndex={0}
                 onKeyDown={(e) => {
@@ -641,7 +631,7 @@ export default function CustomersPage() {
                   }`}>
                     <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">BALANCE</span>
                     <span className={`text-base sm:text-lg font-bold tracking-tight ${customer.balance > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
-                      {formatCurrency(customer.balance, currentOrg?.settings.currency)}
+                      {formatStatCurrency(customer.balance, currentOrg?.settings.currency)}
                     </span>
                   </div>
                 </div>
@@ -742,50 +732,56 @@ export default function CustomersPage() {
 
                 {/* Financial metrics row */}
                 <div>
-                  <div className="flex gap-1.5 sm:gap-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3">
                     {/* Total Sales */}
-                    <div className="bg-white border border-zinc-200/90 rounded-2xl px-1.5 py-2 sm:px-3 sm:py-3 min-h-[82px] sm:min-h-[88px] flex flex-col justify-between min-w-0 flex-1 shadow-2xs hover:border-blue-200 transition-colors">
+                    <div className="col-span-2 sm:col-span-1 bg-white border border-zinc-200/90 rounded-2xl p-2 sm:px-3 sm:py-3 min-h-[52px] sm:min-h-[88px] flex flex-row sm:flex-col justify-between items-center sm:items-start min-w-0 shadow-2xs hover:border-blue-200 transition-colors">
                       <div className="flex items-center gap-1 sm:gap-1.5 min-w-0">
                         <div className="w-4 h-4 rounded-[5px] bg-blue-50 text-blue-500 flex items-center justify-center shrink-0">
                           <ShoppingCart className="w-3 h-3" />
                         </div>
-                        <span className="text-[10px] leading-tight font-medium text-slate-600 whitespace-nowrap">Total Sales</span>
+                        <span className="text-[9px] min-[380px]:text-[10px] leading-tight font-medium text-slate-600 whitespace-nowrap">
+                          Total Sales
+                        </span>
                       </div>
                       <div
                         title={formatStat(totalSalesVal)}
-                        className="mt-1.5 sm:mt-2 text-xs sm:text-sm font-bold text-zinc-900 tracking-tight font-mono whitespace-nowrap"
+                        className="sm:mt-2 text-[11px] min-[380px]:text-xs sm:text-sm font-bold text-zinc-900 tracking-tight font-mono whitespace-nowrap"
                       >
                         {formatStat(totalSalesVal)}
                       </div>
                     </div>
 
                     {/* Collected */}
-                    <div className="bg-white border border-zinc-200/90 rounded-2xl px-1.5 py-2 sm:px-3 sm:py-3 min-h-[82px] sm:min-h-[88px] flex flex-col justify-between min-w-0 flex-1 shadow-2xs hover:border-emerald-200 transition-colors">
+                    <div className="col-span-1 bg-white border border-zinc-200/90 rounded-2xl p-2 sm:px-3 sm:py-3 min-h-[74px] sm:min-h-[88px] flex flex-col justify-between min-w-0 shadow-2xs hover:border-emerald-200 transition-colors">
                       <div className="flex items-center gap-1 sm:gap-1.5 min-w-0">
                         <div className="w-4 h-4 rounded-[5px] bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
                           <Coins className="w-3 h-3" />
                         </div>
-                        <span className="text-[10px] leading-tight font-medium text-slate-600 whitespace-nowrap">Collected</span>
+                        <span className="text-[9px] min-[380px]:text-[10px] leading-tight font-medium text-slate-600 whitespace-nowrap">
+                          Collected
+                        </span>
                       </div>
                       <div
                         title={formatStat(collectedVal)}
-                        className="mt-1.5 sm:mt-2 text-xs sm:text-sm font-bold text-emerald-600 tracking-tight font-mono whitespace-nowrap"
+                        className="mt-1.5 sm:mt-2 text-[11px] min-[380px]:text-xs sm:text-sm font-bold text-emerald-600 tracking-tight font-mono whitespace-nowrap"
                       >
                         {formatStat(collectedVal)}
                       </div>
                     </div>
 
                     {/* Due */}
-                    <div className="bg-white border border-zinc-200/90 rounded-2xl px-1.5 py-2 sm:px-3 sm:py-3 min-h-[82px] sm:min-h-[88px] flex flex-col justify-between min-w-0 flex-1 shadow-2xs hover:border-rose-200 transition-colors">
+                    <div className="col-span-1 bg-white border border-zinc-200/90 rounded-2xl p-2 sm:px-3 sm:py-3 min-h-[74px] sm:min-h-[88px] flex flex-col justify-between min-w-0 shadow-2xs hover:border-rose-200 transition-colors">
                       <div className="flex items-center gap-1 sm:gap-1.5 min-w-0">
                         <div className="w-4 h-4 rounded-[5px] bg-rose-50 text-rose-500 flex items-center justify-center shrink-0">
                           <Clock className="w-3 h-3" />
                         </div>
-                        <span className="text-[10px] leading-tight font-medium text-slate-600 whitespace-nowrap">Due</span>
+                        <span className="text-[9px] min-[380px]:text-[10px] leading-tight font-medium text-slate-600 whitespace-nowrap">
+                          Due
+                        </span>
                       </div>
                       <div
                         title={formatStat(dueVal)}
-                        className="mt-1.5 sm:mt-2 text-xs sm:text-sm font-bold text-rose-600 tracking-tight font-mono whitespace-nowrap"
+                        className="mt-1.5 sm:mt-2 text-[11px] min-[380px]:text-xs sm:text-sm font-bold text-rose-600 tracking-tight font-mono whitespace-nowrap"
                       >
                         {formatStat(dueVal)}
                       </div>
