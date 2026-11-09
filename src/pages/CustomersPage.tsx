@@ -742,50 +742,50 @@ export default function CustomersPage() {
 
                 {/* Financial metrics row */}
                 <div>
-                  <div className="flex gap-2 sm:gap-3">
+                  <div className="flex gap-1.5 sm:gap-3">
                     {/* Total Sales */}
-                    <div className="bg-white border border-zinc-200/90 rounded-2xl p-2.5 sm:p-3 min-h-[82px] sm:min-h-[88px] flex flex-col justify-between min-w-0 flex-1 shadow-2xs hover:border-blue-200 transition-colors">
-                      <div className="flex items-center gap-1.5 min-w-0">
+                    <div className="bg-white border border-zinc-200/90 rounded-2xl px-1.5 py-2 sm:px-3 sm:py-3 min-h-[82px] sm:min-h-[88px] flex flex-col justify-between min-w-0 flex-1 shadow-2xs hover:border-blue-200 transition-colors">
+                      <div className="flex items-center gap-1 sm:gap-1.5 min-w-0">
                         <div className="w-4 h-4 rounded-[5px] bg-blue-50 text-blue-500 flex items-center justify-center shrink-0">
-                          <ShoppingCart className="w-3.5 h-3.5" />
+                          <ShoppingCart className="w-3 h-3" />
                         </div>
-                        <span className="text-[10px] sm:text-xs font-semibold text-zinc-500 truncate">Total Sales</span>
+                        <span className="text-[10px] leading-tight font-medium text-slate-600 whitespace-nowrap">Total Sales</span>
                       </div>
                       <div
                         title={formatStat(totalSalesVal)}
-                        className="mt-1.5 sm:mt-2 text-sm sm:text-base font-bold text-zinc-900 tracking-tight font-mono truncate"
+                        className="mt-1.5 sm:mt-2 text-xs sm:text-sm font-bold text-zinc-900 tracking-tight font-mono whitespace-nowrap"
                       >
                         {formatStat(totalSalesVal)}
                       </div>
                     </div>
 
                     {/* Collected */}
-                    <div className="bg-white border border-zinc-200/90 rounded-2xl p-2.5 sm:p-3 min-h-[82px] sm:min-h-[88px] flex flex-col justify-between min-w-0 flex-1 shadow-2xs hover:border-emerald-200 transition-colors">
-                      <div className="flex items-center gap-1.5 min-w-0">
+                    <div className="bg-white border border-zinc-200/90 rounded-2xl px-1.5 py-2 sm:px-3 sm:py-3 min-h-[82px] sm:min-h-[88px] flex flex-col justify-between min-w-0 flex-1 shadow-2xs hover:border-emerald-200 transition-colors">
+                      <div className="flex items-center gap-1 sm:gap-1.5 min-w-0">
                         <div className="w-4 h-4 rounded-[5px] bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
-                          <Coins className="w-3.5 h-3.5" />
+                          <Coins className="w-3 h-3" />
                         </div>
-                        <span className="text-[10px] sm:text-xs font-semibold text-zinc-500 truncate">Collected</span>
+                        <span className="text-[10px] leading-tight font-medium text-slate-600 whitespace-nowrap">Collected</span>
                       </div>
                       <div
                         title={formatStat(collectedVal)}
-                        className="mt-1.5 sm:mt-2 text-sm sm:text-base font-bold text-emerald-600 tracking-tight font-mono truncate"
+                        className="mt-1.5 sm:mt-2 text-xs sm:text-sm font-bold text-emerald-600 tracking-tight font-mono whitespace-nowrap"
                       >
                         {formatStat(collectedVal)}
                       </div>
                     </div>
 
                     {/* Due */}
-                    <div className="bg-white border border-zinc-200/90 rounded-2xl p-2.5 sm:p-3 min-h-[82px] sm:min-h-[88px] flex flex-col justify-between min-w-0 flex-1 shadow-2xs hover:border-rose-200 transition-colors">
-                      <div className="flex items-center gap-1.5 min-w-0">
+                    <div className="bg-white border border-zinc-200/90 rounded-2xl px-1.5 py-2 sm:px-3 sm:py-3 min-h-[82px] sm:min-h-[88px] flex flex-col justify-between min-w-0 flex-1 shadow-2xs hover:border-rose-200 transition-colors">
+                      <div className="flex items-center gap-1 sm:gap-1.5 min-w-0">
                         <div className="w-4 h-4 rounded-[5px] bg-rose-50 text-rose-500 flex items-center justify-center shrink-0">
-                          <Clock className="w-3.5 h-3.5" />
+                          <Clock className="w-3 h-3" />
                         </div>
-                        <span className="text-[10px] sm:text-xs font-semibold text-zinc-500 truncate">Due</span>
+                        <span className="text-[10px] leading-tight font-medium text-slate-600 whitespace-nowrap">Due</span>
                       </div>
                       <div
                         title={formatStat(dueVal)}
-                        className="mt-1.5 sm:mt-2 text-sm sm:text-base font-bold text-rose-600 tracking-tight font-mono truncate"
+                        className="mt-1.5 sm:mt-2 text-xs sm:text-sm font-bold text-rose-600 tracking-tight font-mono whitespace-nowrap"
                       >
                         {formatStat(dueVal)}
                       </div>
