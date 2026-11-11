@@ -599,6 +599,7 @@ function MainContent() {
         <Route path="/dispensers" element={<DispensersPage />} />
         <Route path="/reports" element={isAllowed('advancedReports') ? <ReportsPage /> : <Navigate to="/" replace />} />
         <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/settings/gst-filing" element={<Navigate to="/settings?tab=gst-filing" replace />} />
         <Route path="/print/barcode" element={<BarcodePrintPage />} />
         <Route path="*" element={<Dashboard />} />
       </Routes>

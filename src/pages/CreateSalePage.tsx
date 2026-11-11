@@ -6,7 +6,8 @@ import { useRealtimeData } from '../contexts/RealtimeDataContext';
 import { saleService } from '../services/saleService';
 import { inventoryService } from '../services/inventoryService';
 import { Customer, Item, Sale, SaleLine, InventoryLocation, StockSummary, PaymentRecord } from '../types';
-import { Plus, Minus, Trash2, Search, Loader2, ShoppingCart, X, Barcode, Camera, CheckCircle2, Printer, Download } from 'lucide-react';
+import { Plus, Minus, Trash2, Search, Loader2, ShoppingCart, X, Barcode, Camera, CheckCircle2, Printer, Download, AlertTriangle } from 'lucide-react';
+import { gstFilingService } from '../services/gstFilingService';
 import { AnimatePresence, motion } from 'motion/react';
 import { Link } from 'react-router-dom';
 import { useNotifications } from '../notifications';
@@ -285,6 +286,7 @@ export const CreateSalePage: React.FC = () => {
   }, [items, locationStock]);
 
   const [isGstBill, setIsGstBill] = useState(false);
+  const currentMonthFiledCheck = gstFilingService.checkIfTimestampInFiledPeriod(currentOrg?.settings, Date.now());
   const [gstBillNumber, setGstBillNumber] = useState('');
   const isTaxEnabled = currentOrg?.settings?.taxEnabled ?? false;
   const settingsTaxRate = currentOrg?.settings?.taxRate ?? 0;

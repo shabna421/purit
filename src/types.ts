@@ -111,6 +111,11 @@ export interface OrganizationSettings {
   phone?: string;
   email?: string;
   gstin?: string;
+  businessState?: string;
+  businessStateCode?: string;
+  filingFrequency?: 'monthly' | 'quarterly';
+  roundDecimals?: boolean;
+  gstFiledMonths?: Record<string, { filedAt: number; arn?: string; notes?: string }>;
   modules: {
     purchases: boolean;
     sales: boolean;
@@ -272,6 +277,7 @@ export interface Sale {
   gstAmount?: number;
   taxRate?: number;
   gstBillNumber?: string;
+  placeOfSupply?: string;
 }
 
 export interface SaleLine {

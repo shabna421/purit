@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useTenancy, useAuth } from '../contexts';
 import { orgService } from '../services/orgService';
 import { OrganizationSettings, Role, ROLE_PERMISSIONS, Membership, User } from '../types';
-import { Shield, Layout, Save, Check, X, Search, Coins, Users, Lock, UserPlus, Trash2, Key, User as UserIcon, Mail, Building2, Pencil } from 'lucide-react';
+import { Shield, Layout, Save, Check, X, Search, Coins, Users, Lock, UserPlus, Trash2, Key, User as UserIcon, Mail, Building2, Pencil, FileSpreadsheet } from 'lucide-react';
+import { GstFilingHelper } from '../components/gst/GstFilingHelper';
 import { useNotifications } from '../notifications';
 import { AppSelect } from '../components/AppSelect';
 import { formatNumericInput, parseNumericInput } from '../utils/numbers';
@@ -47,7 +48,29 @@ export default function SettingsPage() {
   const [searchTerm, setSearchTerm] = useState('');
   
   // Navigation Tabs
-  const [activeTab, setActiveTab] = useState<'general' | 'modules' | 'staff'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'modules' | 'staff' | 'gst-filing'>(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const tabParam = params.get('tab');
+      if (tabParam === 'gst-filing') return 'gst-filing';
+      if (tabParam === 'modules') return 'modules';
+      if (tabParam === 'staff') return 'staff';
+    } catch {}
+    return 'general';
+  });
+
+  const handleTabChange = (tab: 'general' | 'modules' | 'staff' | 'gst-filing') => {
+    setActiveTab(tab);
+    try {
+      const url = new URL(window.location.href);
+      if (tab === 'general') {
+        url.searchParams.delete('tab');
+      } else {
+        url.searchParams.set('tab', tab);
+      }
+      window.history.replaceState({}, '', url.toString());
+    } catch {}
+  };
 
   // Staff State
   const [members, setMembers] = useState<MemberWithProfile[]>([]);
@@ -462,25 +485,32 @@ export default function SettingsPage() {
       {/* Tabs Menu */}
       <div className="flex gap-2 rounded-2xl bg-zinc-100 p-1.5 overflow-x-auto shadow-sm border border-zinc-200">
         <button
-          onClick={() => setActiveTab('general')}
+          onClick={() => handleTabChange('general')}
           className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold whitespace-nowrap transition-all ${activeTab === 'general' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-900'}`}
         >
           <Coins className="w-4 h-4" />
           General Defaults
         </button>
         <button
-          onClick={() => setActiveTab('modules')}
+          onClick={() => handleTabChange('modules')}
           className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold whitespace-nowrap transition-all ${activeTab === 'modules' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-900'}`}
         >
           <Layout className="w-4 h-4" />
           Feature Modules
         </button>
         <button
-          onClick={() => setActiveTab('staff')}
+          onClick={() => handleTabChange('staff')}
           className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold whitespace-nowrap transition-all ${activeTab === 'staff' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-900'}`}
         >
           <Users className="w-4 h-4" />
           Staff Management
+        </button>
+        <button
+          onClick={() => handleTabChange('gst-filing')}
+          className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold whitespace-nowrap transition-all ${activeTab === 'gst-filing' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-900'}`}
+        >
+          <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+          GST Filing
         </button>
       </div>
 
@@ -1040,6 +1070,12 @@ export default function SettingsPage() {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {activeTab === 'gst-filing' && (
+          <div className="space-y-8 animate-in fade-in duration-200">
+            <GstFilingHelper />
           </div>
         )}
       </div>

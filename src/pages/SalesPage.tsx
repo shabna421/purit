@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { format } from 'date-fns';
 import { AnimatePresence, motion } from 'motion/react';
 import {
+  AlertTriangle,
   Barcode,
   Calendar,
   ChevronRight,
@@ -21,6 +22,7 @@ import {
   X,
 } from 'lucide-react';
 import { saleService } from '../services/saleService';
+import { gstFilingService } from '../services/gstFilingService';
 import { useTenancy } from '../contexts';
 import { useRealtimeData } from '../contexts/RealtimeDataContext';
 import { useNotifications } from '../notifications';
@@ -545,6 +547,21 @@ export default function SalesPage() {
               </div>
 
               <form onSubmit={handleSaveSale} className="space-y-4 p-5">
+                {(() => {
+                  const orig = sales.find((s) => s.id === editingSale.id);
+                  const check = orig ? gstFilingService.checkIfTimestampInFiledPeriod(currentOrg?.settings, orig.timestamp) : { isFiled: false };
+                  if (!check.isFiled) return null;
+                  return (
+                    <div className="p-3.5 bg-amber-50 border border-amber-300 rounded-xl text-xs text-amber-900 flex items-start gap-2.5">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                      <div>
+                        <span className="font-bold">GST Return Already Filed:</span> This invoice belongs to tax period{' '}
+                        <strong>{check.periodKey}</strong>, which has already been marked as <strong>FILED</strong> in the GST Filing Helper. Modifying or deleting this invoice will create discrepancies with your filed GSTR-1 and GSTR-3B.
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                   <div className="md:col-span-2">
                     <label className="mb-2 block text-xs font-bold uppercase text-zinc-400">Customer</label>
