@@ -52,6 +52,7 @@ import {
   printHtml,
 } from '../utils/reporting';
 import { CustomerLedgerModal } from '../components/CustomerLedgerModal';
+import { RollingRepurchaseStatus } from '../components/repurchase/RollingRepurchaseStatus';
 import { PremiumDateRangePicker } from '../components/PremiumDateRangePicker';
 import { DispenserRecord, DEFAULT_DISPENSERS } from './DispensersPage';
 import { useNotifications } from '../notifications';
@@ -757,6 +758,7 @@ export default function CustomerDetailsPage() {
       record = {
         id: activity.rawId || activity.id.replace(/^payment-/, ''),
         orgId: currentOrg?.id || '',
+        userId: user?.uid || '',
         entityType: 'customer',
         entityId: customer?.id || id || '',
         amount: activity.amount,
@@ -876,6 +878,7 @@ export default function CustomerDetailsPage() {
       record = {
         id: activity.rawId || activity.id.replace(/^payment-/, ''),
         orgId: currentOrg?.id || '',
+        userId: user?.uid || '',
         entityType: 'customer',
         entityId: customer?.id || id || '',
         amount: activity.amount,
@@ -1315,6 +1318,16 @@ export default function CustomerDetailsPage() {
           </button>
         </div>
       </div>
+
+      {/* ------------------------------------------------------------- */}
+      {/* Rolling Repurchase Status Section                             */}
+      {/* ------------------------------------------------------------- */}
+      <RollingRepurchaseStatus
+        sales={sales}
+        productCatalog={productCatalogMap}
+        customerId={customer.id}
+        customerName={customer.name}
+      />
 
       {/* ------------------------------------------------------------- */}
       {/* Search & Filter Toolbar                                       */}

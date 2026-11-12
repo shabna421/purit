@@ -6,8 +6,9 @@ import { useRealtimeData } from '../contexts/RealtimeDataContext';
 import { saleService } from '../services/saleService';
 import { inventoryService } from '../services/inventoryService';
 import { Customer, PaymentRecord, Sale } from '../types';
+import { calculateRepurchasePredictions } from '../utils/repurchasePrediction';
 import { 
-  Plus, Search, User, Phone, MapPin, X, Loader2, Pencil, Wallet, HandCoins, 
+  Plus, Search, User, Phone, MapPin, X, Loader2, Pencil, Wallet, HandCoins, RotateCcw, Calendar, 
   Trash2, BookOpen, Download, ShoppingCart, Coins, Clock, CreditCard, 
   BarChart2, FileText, MinusCircle, CircleDollarSign, MoreVertical 
 } from 'lucide-react';
@@ -64,6 +65,7 @@ export default function CustomersPage() {
   const productCatalogMap = useMemo(() => new Map((items || []).map((i) => [i.id, i])), [items]);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
+  const [expandedPredCards, setExpandedPredCards] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -447,6 +449,7 @@ export default function CustomersPage() {
           filteredCustomers.map((customer) => {
             const custSales = sales?.filter((s) => s.customerId === customer.id) || [];
             const custPayments = (payments || []).filter((p) => p.entityType === 'customer' && p.entityId === customer.id);
+            const repurchaseSummary = calculateRepurchasePredictions(custSales, productCatalogMap, customer.id);
             const realTotalSales = custSales.reduce((sum, s) => sum + (s.totalAmount || 0), 0);
             const upfrontCollected = custSales.reduce((sum, s) => sum + (s.paidAmount || 0), 0);
             const manualCollected = custPayments
@@ -568,6 +571,21 @@ export default function CustomersPage() {
                         <p className="text-sm text-zinc-400 font-medium mt-0.5 truncate">
                           {customer.shopName || 'No Shop Name'}
                         </p>
+                        {repurchaseSummary.overdueCount > 0 ? (
+                          <div className="mt-1">
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-rose-700 bg-rose-50 border border-rose-200/80 px-2 py-0.5 rounded-full">
+                              <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+                              <span>{repurchaseSummary.overdueCount} Reorder{repurchaseSummary.overdueCount === 1 ? '' : 's'} Overdue</span>
+                            </span>
+                          </div>
+                        ) : repurchaseSummary.dueTodayCount > 0 ? (
+                          <div className="mt-1">
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200/80 px-2 py-0.5 rounded-full">
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                              <span>{repurchaseSummary.dueTodayCount} Reorder Due Today</span>
+                            </span>
+                          </div>
+                        ) : null}
                       </div>
                     </div>
 
@@ -623,6 +641,108 @@ export default function CustomersPage() {
                       </AnimatePresence>
                     </div>
                   </div>
+
+                  {/* Next Reorder Prediction Section */}
+                  {repurchaseSummary.predictions.length === 0 ? (
+                    <div className="rounded-2xl border border-zinc-100 bg-zinc-50/70 px-3 py-2 text-xs flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 font-bold uppercase tracking-wider text-[10px] text-zinc-400">
+                        <RotateCcw className="w-3 h-3 text-zinc-400" />
+                        <span>Next Reorder Prediction</span>
+                      </div>
+                      <span className="text-[11px] font-medium text-zinc-400">Insufficient History</span>
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl border border-zinc-200/90 bg-zinc-50/70 p-2.5 sm:p-3 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5">
+                          <RotateCcw className="w-3.5 h-3.5 text-orange-500" />
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">
+                            Next Reorder Prediction
+                          </span>
+                        </div>
+                        <span className="text-[10px] font-bold text-zinc-400">
+                          {repurchaseSummary.predictions.length} product{repurchaseSummary.predictions.length === 1 ? '' : 's'}
+                        </span>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        {(expandedPredCards[customer.id]
+                          ? repurchaseSummary.predictions
+                          : repurchaseSummary.predictions.slice(0, 2)
+                        ).map((pred) => (
+                          <div
+                            key={pred.itemId}
+                            className="flex items-center justify-between gap-2 p-1.5 sm:p-2 rounded-xl bg-white border border-zinc-200/70 hover:border-zinc-300 transition-colors"
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-bold text-xs text-zinc-800 truncate" title={pred.itemName}>
+                                  {pred.itemName}
+                                </span>
+                                <span className="text-[9px] font-semibold px-1.5 py-0.2 rounded bg-zinc-100 text-zinc-600 shrink-0">
+                                  {pred.unit}
+                                </span>
+                              </div>
+                              <div className="text-[10px] text-zinc-400 flex items-center gap-1 mt-0.5">
+                                <span>Next:</span>
+                                <strong className="text-zinc-600 font-semibold">
+                                  {pred.predictedNextPurchaseDate
+                                    ? format(new Date(pred.predictedNextPurchaseDate), 'dd MMM yyyy')
+                                    : 'Insufficient History'}
+                                </strong>
+                              </div>
+                            </div>
+
+                            {/* Status Badge */}
+                            <div className="shrink-0">
+                              {pred.status === 'overdue' ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-extrabold bg-rose-50 text-rose-700 border border-rose-200">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+                                  <span>{pred.overdueDays}d Overdue</span>
+                                </span>
+                              ) : pred.status === 'due_today' ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-extrabold bg-amber-50 text-amber-800 border border-amber-200">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                                  <span>Due Today</span>
+                                </span>
+                              ) : pred.status === 'upcoming' ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                  <span>In {pred.daysRemaining}d</span>
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-medium bg-zinc-100 text-zinc-500">
+                                  <span>Insufficient History</span>
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {repurchaseSummary.predictions.length > 2 && (
+                        <div className="pt-0.5 flex justify-end">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setExpandedPredCards((prev) => ({
+                                ...prev,
+                                [customer.id]: !prev[customer.id],
+                              }));
+                            }}
+                            className="text-[10px] font-bold text-orange-600 hover:text-orange-700 hover:underline flex items-center gap-0.5"
+                          >
+                            <span>
+                              {expandedPredCards[customer.id]
+                                ? 'Show less'
+                                : `+${repurchaseSummary.predictions.length - 2} more product${repurchaseSummary.predictions.length - 2 === 1 ? '' : 's'}`}
+                            </span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {/* Balance Bar */}
                   <div className={`flex items-center justify-between px-3.5 py-2 rounded-2xl border ${

@@ -165,12 +165,14 @@ export const CreateSalePage: React.FC = () => {
   const { success, error: notifyError } = useNotifications();
   const [searchParams] = useSearchParams();
   const initialLocationId = searchParams.get('locationId');
+  const initialCustomerId = searchParams.get('customerId');
+  const initialItemId = searchParams.get('itemId');
 
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [items, setItems] = useState<Item[]>([]);
   const [locations, setLocations] = useState<InventoryLocation[]>([]);
   const [locationStock, setLocationStock] = useState<StockSummary[]>([]);
-  const [selectedCustomer, setSelectedCustomer] = useState('');
+  const [selectedCustomer, setSelectedCustomer] = useState(initialCustomerId || '');
   const [selectedLocation, setSelectedLocation] = useState(initialLocationId || '');
   const [saleItems, setSaleItems] = useState<Partial<SaleLine>[]>([]);
   const [paymentType, setPaymentType] = useState<'cash' | 'credit'>('cash');
@@ -314,6 +316,15 @@ export const CreateSalePage: React.FC = () => {
     }]);
     setSearchTerm('');
   };
+
+  useEffect(() => {
+    if (initialItemId && items.length > 0 && saleItems.length === 0) {
+      const targetItem = items.find((i) => i.id === initialItemId);
+      if (targetItem) {
+        addItem(targetItem);
+      }
+    }
+  }, [initialItemId, items]);
 
   const playBeep = () => {
     try {
