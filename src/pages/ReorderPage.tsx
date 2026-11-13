@@ -57,7 +57,20 @@ export default function ReorderPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<FilterType>('all');
   const [routeFilter, setRouteFilter] = useState<string>('all');
-  const [viewMode, setViewMode] = useState<ViewMode>('rows');
+  const [viewMode, setViewMode] = useState<ViewMode>(() => {
+    try {
+      const saved = localStorage.getItem('purity_reorder_view_mode');
+      if (saved === 'rows' || saved === 'columns') return saved;
+    } catch {}
+    return 'columns';
+  });
+
+  const handleViewModeChange = (mode: ViewMode) => {
+    setViewMode(mode);
+    try {
+      localStorage.setItem('purity_reorder_view_mode', mode);
+    } catch {}
+  };
   const [selectedProductForHistory, setSelectedProductForHistory] = useState<{
     customer: Customer;
     prediction: ProductRepurchasePrediction;
@@ -171,7 +184,7 @@ export default function ReorderPage() {
           <div className="flex items-center bg-zinc-100 p-1 rounded-xl border border-zinc-200">
             <button
               type="button"
-              onClick={() => setViewMode('rows')}
+              onClick={() => handleViewModeChange('rows')}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
                 viewMode === 'rows'
                   ? 'bg-white text-zinc-900 shadow-xs'
@@ -184,7 +197,7 @@ export default function ReorderPage() {
             </button>
             <button
               type="button"
-              onClick={() => setViewMode('columns')}
+              onClick={() => handleViewModeChange('columns')}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
                 viewMode === 'columns'
                   ? 'bg-white text-zinc-900 shadow-xs'
