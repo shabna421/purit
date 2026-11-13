@@ -399,3 +399,102 @@ export function formatConsumptionRate(rate: number | null, unit: string = 'unit'
   const formatted = rate >= 10 ? rate.toFixed(1) : rate.toFixed(2);
   return `${formatted} ${unit}/day`;
 }
+
+export interface ProductPurchaseTransaction {
+  saleId: string;
+  invoiceNumber?: string;
+  timestamp: number;
+  dateFormatted: string;
+  quantity: number;
+  unit: string;
+  unitPrice?: number;
+  totalAmount?: number;
+  daysSincePrevious: number | null; // null for first purchase, number of days for subsequent
+  dailyConsumptionForCycle?: number | null;
+  paymentMethod?: string;
+}
+
+/**
+ * Extracts the full chronological purchase history for a specific customer and product.
+ * Calculates intervals between purchases and the daily consumption for each cycle.
+ */
+export function getProductPurchaseHistory(
+  sales: Sale[],
+  customerId: string,
+  itemId: string,
+  unit: string = 'unit'
+): ProductPurchaseTransaction[] {
+  // 1. Filter sales for this customer
+  const validSales = sales.filter(
+    (sale) => sale.customerId === customerId && sale.status !== 'cancelled'
+  );
+
+  // 2. Extract item lines
+  const rawRecords: {
+    saleId: string;
+    invoiceNumber?: string;
+    timestamp: number;
+    quantity: number;
+    unitPrice?: number;
+    totalAmount?: number;
+    paymentMethod?: string;
+  }[] = [];
+
+  for (const s of validSales) {
+    if (!s.items || !Array.isArray(s.items)) continue;
+    for (const line of s.items) {
+      if (line.itemId === itemId) {
+        const qty = Number(line.quantity) || 0;
+        if (qty <= 0) continue;
+        const price = Number(line.unitPrice) || 0;
+        rawRecords.push({
+          saleId: s.id,
+          invoiceNumber: s.gstBillNumber || s.id.slice(-6).toUpperCase(),
+          timestamp: s.timestamp,
+          quantity: qty,
+          unitPrice: price,
+          totalAmount: qty * price,
+          paymentMethod: s.paymentType,
+        });
+      }
+    }
+  }
+
+  // 3. Sort chronologically (earliest to latest)
+  rawRecords.sort((a, b) => a.timestamp - b.timestamp);
+
+  // 4. Calculate intervals between consecutive purchases
+  const history: ProductPurchaseTransaction[] = [];
+  for (let i = 0; i < rawRecords.length; i++) {
+    const cur = rawRecords[i];
+    let daysSincePrevious: number | null = null;
+    let dailyConsumptionForCycle: number | null = null;
+
+    if (i > 0) {
+      const prev = rawRecords[i - 1];
+      const startCur = startOfDay(new Date(cur.timestamp)).getTime();
+      const startPrev = startOfDay(new Date(prev.timestamp)).getTime();
+      const diffDays = Math.max(0, Math.round((startCur - startPrev) / (1000 * 60 * 60 * 24)));
+      daysSincePrevious = diffDays;
+      if (diffDays > 0) {
+        dailyConsumptionForCycle = prev.quantity / diffDays;
+      }
+    }
+
+    history.push({
+      saleId: cur.saleId,
+      invoiceNumber: cur.invoiceNumber,
+      timestamp: cur.timestamp,
+      dateFormatted: format(new Date(cur.timestamp), 'dd MMM yyyy, hh:mm a'),
+      quantity: cur.quantity,
+      unit,
+      unitPrice: cur.unitPrice,
+      totalAmount: cur.totalAmount,
+      daysSincePrevious,
+      dailyConsumptionForCycle,
+      paymentMethod: cur.paymentMethod,
+    });
+  }
+
+  return history;
+}

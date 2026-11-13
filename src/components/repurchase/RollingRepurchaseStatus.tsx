@@ -16,6 +16,7 @@ import {
   HelpCircle,
   Package,
   Plus,
+  History,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { Link } from 'react-router-dom';
@@ -32,6 +33,7 @@ interface RollingRepurchaseStatusProps {
   productCatalog: Map<string, Item>;
   customerId: string;
   customerName?: string;
+  onProductClick?: (prediction: ProductRepurchasePrediction) => void;
 }
 
 type FilterOption = 'all' | 'overdue' | 'due_today' | 'upcoming' | 'insufficient_history';
@@ -41,6 +43,7 @@ export const RollingRepurchaseStatus: React.FC<RollingRepurchaseStatusProps> = (
   productCatalog,
   customerId,
   customerName,
+  onProductClick,
 }) => {
   const [filter, setFilter] = useState<FilterOption>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -296,14 +299,27 @@ export const RollingRepurchaseStatus: React.FC<RollingRepurchaseStatusProps> = (
                     </div>
                   </div>
 
-                  {/* Dynamic Status Badge */}
-                  <div className="flex items-center gap-2.5 self-start sm:self-auto">
+                  {/* Dynamic Status Badge & Actions */}
+                  <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
                     <span
                       className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-extrabold border ${badgeStyle}`}
                     >
                       <span className={`w-2 h-2 rounded-full ${dotColor}`} />
                       <span>{product.statusLabel}</span>
                     </span>
+
+                    {/* View History Drill-down */}
+                    {onProductClick && (
+                      <button
+                        type="button"
+                        onClick={() => onProductClick(product)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700 text-xs font-semibold shadow-2xs transition-all active:scale-[0.98]"
+                        title="View complete purchase history & intervals"
+                      >
+                        <History className="w-3.5 h-3.5 text-orange-600" />
+                        <span className="hidden sm:inline">History</span>
+                      </button>
+                    )}
 
                     {/* Quick Reorder Action */}
                     <Link

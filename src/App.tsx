@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter, Routes, Route, Link, Navigate, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { AuthProvider, useAuth, TenancyProvider, useTenancy } from './contexts';
 import { RealtimeDataProvider } from './contexts/RealtimeDataContext';
 import { NotificationProvider, useNotifications } from './notifications';
@@ -30,6 +30,7 @@ import {
   AlertCircle,
   BarChart3,
   Droplets,
+  Repeat,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { AppSelect } from './components/AppSelect';
@@ -58,6 +59,7 @@ import ExpenseTrackerPage from './pages/ExpenseTrackerPage';
 import BarcodePrintPage from './pages/BarcodePrintPage';
 import { ProductInsightsPage } from './pages/ProductInsightsPage';
 import DispensersPage from './pages/DispensersPage';
+import ReorderPage from './pages/ReorderPage';
 
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
@@ -78,6 +80,7 @@ const navEntries: NavEntry[] = [
   { icon: Package, label: 'Inventory', to: '/items', mobilePrimary: true, requires: 'inventory' },
   { icon: ShoppingCart, label: 'Sales', to: '/sales', mobilePrimary: true, mobileAccent: true, requires: 'sales' },
   { icon: Target, label: 'My Target', to: '/sales/target', requires: 'sales' },
+  { icon: Repeat, label: 'Reorder', to: '/reorder' },
   { icon: Users, label: 'Customers', to: '/customers', mobilePrimary: true },
   { icon: Building2, label: 'Suppliers', to: '/suppliers', requires: 'purchases' },
   { icon: Wallet, label: 'Expense Tracker', to: '/expenses', requires: 'expenseTracker' },
@@ -220,7 +223,7 @@ function MoreSheet({
             animate={{ y: 0 }}
             exit={{ y: '100%' }}
             transition={{ type: 'spring', stiffness: 260, damping: 28 }}
-            className="md:hidden fixed inset-x-0 bottom-0 z-50 rounded-t-3xl bg-white border-t border-zinc-200 px-5 pb-8 pt-4 shadow-2xl"
+            className="md:hidden fixed inset-x-0 bottom-0 z-50 rounded-t-3xl bg-white border-t border-zinc-200 px-5 pb-8 pt-4 shadow-2xl max-h-[85vh] overflow-y-auto"
           >
             <div className="mx-auto mb-4 h-1.5 w-14 rounded-full bg-zinc-200" />
             <div className="mb-4 flex items-center justify-between">
@@ -586,6 +589,7 @@ function MainContent() {
         <Route path="/sales/:id/invoice" element={<InvoicePage />} />
         <Route path="/customers" element={<CustomersPage />} />
         <Route path="/customers/:id" element={<CustomerDetailsPage />} />
+        <Route path="/reorder" element={<ReorderPage />} />
         <Route path="/suppliers" element={isAllowed('purchases') ? <SuppliersPage /> : <Navigate to="/" replace />} />
         <Route path="/suppliers/:id" element={isAllowed('purchases') ? <SupplierDetailsPage /> : <Navigate to="/" replace />} />
         <Route path="/expenses" element={isAllowed('expenseTracker') ? <ExpenseTrackerPage /> : <Navigate to="/" replace />} />

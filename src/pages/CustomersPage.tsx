@@ -1,16 +1,16 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useTenancy } from '../contexts';
 import { useAuth } from '../contexts';
 import { useRealtimeData } from '../contexts/RealtimeDataContext';
 import { saleService } from '../services/saleService';
 import { inventoryService } from '../services/inventoryService';
 import { Customer, PaymentRecord, Sale } from '../types';
-import { calculateRepurchasePredictions } from '../utils/repurchasePrediction';
+import { calculateRepurchasePredictions, ProductRepurchasePrediction } from '../utils/repurchasePrediction';
 import { 
   Plus, Search, User, Phone, MapPin, X, Loader2, Pencil, Wallet, HandCoins, RotateCcw, Calendar, 
   Trash2, BookOpen, Download, ShoppingCart, Coins, Clock, CreditCard, 
-  BarChart2, FileText, MinusCircle, CircleDollarSign, MoreVertical 
+  BarChart2, FileText, MinusCircle, CircleDollarSign, MoreVertical, Repeat
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, startOfMonth, endOfMonth, subMonths, parseISO, startOfDay, endOfDay } from 'date-fns';
@@ -18,6 +18,9 @@ import { useNotifications } from '../notifications';
 import { formatCurrency, formatStatCurrency } from '../utils/currency';
 import { formatNumericInput, parseNumericInput } from '../utils/numbers';
 import { CustomerLedgerModal } from '../components/CustomerLedgerModal';
+import { CustomerReorderTimelineTable } from '../components/repurchase/CustomerReorderTimelineTable';
+import { CustomerReorderModal } from '../components/repurchase/CustomerReorderModal';
+import { ProductPurchaseHistoryModal } from '../components/repurchase/ProductPurchaseHistoryModal';
 import SuperDeleteConfirmModal from '../components/SuperDeleteConfirmModal';
 import { DispenserRecord, DEFAULT_DISPENSERS } from './DispensersPage';
 
@@ -66,6 +69,41 @@ export default function CustomersPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
   const [expandedPredCards, setExpandedPredCards] = useState<Record<string, boolean>>({});
+
+  // Reorder Mode & Product Drill-down State
+  const [searchParams] = useSearchParams();
+  const [selectedCustomerForReorder, setSelectedCustomerForReorder] = useState<Customer | null>(null);
+  const [selectedProductForHistory, setSelectedProductForHistory] = useState<{
+    customer: Customer;
+    prediction: ProductRepurchasePrediction;
+  } | null>(null);
+
+  useEffect(() => {
+    if (searchParams.get('reorder') === 'true' && customers.length > 0) {
+      // Pick first customer with sales or first customer
+      const target = customers.find((c) => {
+        const s = sales?.filter((x) => x.customerId === c.id) || [];
+        return s.length > 0;
+      }) || customers[0];
+      if (target) {
+        setSelectedCustomerForReorder(target);
+      }
+    }
+  }, [searchParams, customers, sales]);
+
+  useEffect(() => {
+    const handleToggle = (e: any) => {
+      const target = customers.find((c) => {
+        const s = sales?.filter((x) => x.customerId === c.id) || [];
+        return s.length > 0;
+      }) || customers[0];
+      if (target) {
+        setSelectedCustomerForReorder(target);
+      }
+    };
+    window.addEventListener('purity:toggle-reorder', handleToggle);
+    return () => window.removeEventListener('purity:toggle-reorder', handleToggle);
+  }, [customers, sales]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -412,13 +450,23 @@ export default function CustomersPage() {
           <h2 className="text-2xl font-bold text-zinc-900">Customers</h2>
           <p className="text-sm text-zinc-500">Manage your customer database and credit balances.</p>
         </div>
-        <button 
-          onClick={openCreateModal}
-          className="flex items-center justify-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-xl font-medium shadow-lg shadow-orange-100 hover:bg-orange-600 transition-all"
-        >
-          <Plus className="w-4 h-4" />
-          Add Customer
-        </button>
+        <div className="flex items-center gap-2.5">
+          <Link
+            to="/reorder"
+            className="flex items-center justify-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 transition-all shadow-2xs"
+            title="Open Shop Reorder Hub"
+          >
+            <Repeat className="w-3.5 h-3.5 text-orange-600" />
+            <span>Reorder Hub</span>
+          </Link>
+          <button 
+            onClick={openCreateModal}
+            className="flex items-center justify-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-xl font-medium shadow-lg shadow-orange-100 hover:bg-orange-600 transition-all text-sm"
+          >
+            <Plus className="w-4 h-4" />
+            Add Customer
+          </button>
+        </div>
       </header>
 
       <div className="relative">
@@ -652,17 +700,27 @@ export default function CustomersPage() {
                       <span className="text-[11px] font-medium text-zinc-400">Insufficient History</span>
                     </div>
                   ) : (
-                    <div className="rounded-2xl border border-zinc-200/90 bg-zinc-50/70 p-2.5 sm:p-3 space-y-2">
+                    <div
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedCustomerForReorder(customer);
+                      }}
+                      className="rounded-2xl border border-zinc-200/90 bg-zinc-50/70 p-2.5 sm:p-3 space-y-2 cursor-pointer hover:border-orange-300 hover:bg-orange-50/20 transition-all group/pred"
+                      title="Click to pop up full customer reorder timelines & purchase history"
+                    >
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-1.5">
-                          <RotateCcw className="w-3.5 h-3.5 text-orange-500" />
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">
+                          <RotateCcw className="w-3.5 h-3.5 text-orange-500 group-hover/pred:rotate-180 transition-transform duration-300" />
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 group-hover/pred:text-orange-600 transition-colors">
                             Next Reorder Prediction
                           </span>
                         </div>
-                        <span className="text-[10px] font-bold text-zinc-400">
-                          {repurchaseSummary.predictions.length} product{repurchaseSummary.predictions.length === 1 ? '' : 's'}
-                        </span>
+                        <div className="flex items-center gap-1 text-[10px] font-bold text-orange-600">
+                          <span>
+                            {repurchaseSummary.predictions.length} product{repurchaseSummary.predictions.length === 1 ? '' : 's'}
+                          </span>
+                          <span className="text-zinc-400 group-hover/pred:text-orange-500 text-xs font-mono">↗</span>
+                        </div>
                       </div>
 
                       <div className="space-y-1.5">
@@ -672,11 +730,19 @@ export default function CustomersPage() {
                         ).map((pred) => (
                           <div
                             key={pred.itemId}
-                            className="flex items-center justify-between gap-2 p-1.5 sm:p-2 rounded-xl bg-white border border-zinc-200/70 hover:border-zinc-300 transition-colors"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedProductForHistory({
+                                customer,
+                                prediction: pred,
+                              });
+                            }}
+                            className="flex items-center justify-between gap-2 p-1.5 sm:p-2 rounded-xl bg-white border border-zinc-200/70 hover:border-orange-300 hover:bg-orange-50/20 transition-all cursor-pointer group/item"
+                            title="Click to view complete purchase history & intervals"
                           >
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-1.5">
-                                <span className="font-bold text-xs text-zinc-800 truncate" title={pred.itemName}>
+                                <span className="font-bold text-xs text-zinc-800 group-hover/item:text-orange-600 transition-colors truncate" title={pred.itemName}>
                                   {pred.itemName}
                                 </span>
                                 <span className="text-[9px] font-semibold px-1.5 py-0.2 rounded bg-zinc-100 text-zinc-600 shrink-0">
@@ -1321,6 +1387,35 @@ export default function CustomersPage() {
         title="Delete Customer Profile?"
         message={`Are you sure you want to permanently delete customer "${customerToDelete?.name}"? All associated transaction histories under this customer will be affected. This action cannot be undone.`}
       />
+
+      {/* Customer Reorder Timelines Popup Modal */}
+      {selectedCustomerForReorder && (
+        <CustomerReorderModal
+          isOpen={Boolean(selectedCustomerForReorder)}
+          onClose={() => setSelectedCustomerForReorder(null)}
+          customer={selectedCustomerForReorder}
+          sales={sales?.filter((s) => s.customerId === selectedCustomerForReorder.id) || []}
+          productCatalog={productCatalogMap}
+          onProductClick={(pred) => {
+            setSelectedProductForHistory({
+              customer: selectedCustomerForReorder,
+              prediction: pred,
+            });
+          }}
+        />
+      )}
+
+      {/* Product Purchase History Drill-down Modal */}
+      {selectedProductForHistory && (
+        <ProductPurchaseHistoryModal
+          isOpen={Boolean(selectedProductForHistory)}
+          onClose={() => setSelectedProductForHistory(null)}
+          customer={selectedProductForHistory.customer}
+          prediction={selectedProductForHistory.prediction}
+          sales={sales}
+          currency={currentOrg?.settings?.currency}
+        />
+      )}
     </div>
   );
 }
