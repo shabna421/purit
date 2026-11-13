@@ -165,18 +165,10 @@ export default function ReorderPage() {
     <div className="space-y-5 font-sans pb-16">
       {/* 1. Header Bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-2.5">
-          <div className="w-10 h-10 rounded-2xl bg-orange-500 text-white flex items-center justify-center shadow-md shadow-orange-500/20 shrink-0">
-            <Repeat className="w-5 h-5" />
-          </div>
-          <div>
-            <h2 className="text-xl sm:text-2xl font-black tracking-tight text-zinc-900">
-              Shop Reorder Timelines
-            </h2>
-            <p className="text-xs text-zinc-500 mt-0.5">
-              Consolidated repurchase history, consumption rates and next order predictions across all shops.
-            </p>
-          </div>
+        <div>
+          <h2 className="text-xl sm:text-2xl font-black tracking-tight text-zinc-900">
+            Shop Reorder Timelines
+          </h2>
         </div>
 
         <div className="flex items-center gap-2">
