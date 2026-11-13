@@ -1,5 +1,5 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import React, { useState, useMemo } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   Repeat,
   RotateCcw,
@@ -8,18 +8,16 @@ import {
   CalendarCheck,
   Search,
   ShoppingCart,
-  ChevronDown,
-  ChevronUp,
-  Package,
   Building2,
-  User,
-  ArrowRight,
-  Filter,
-  CheckCircle2,
-  Calendar,
   ExternalLink,
   Phone,
   MapPin,
+  ArrowRight,
+  LayoutList,
+  Columns3,
+  Calendar,
+  History,
+  Store,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { useRealtimeData } from '../contexts/RealtimeDataContext';
@@ -29,24 +27,26 @@ import {
   calculateRepurchasePredictions,
   CustomerRepurchaseSummary,
   ProductRepurchasePrediction,
+  getProductPurchaseHistory,
+  ProductPurchaseTransaction,
   formatConsumptionRate,
 } from '../utils/repurchasePrediction';
 import { formatCurrency, formatStatCurrency } from '../utils/currency';
-import { CustomerReorderTimelineTable } from '../components/repurchase/CustomerReorderTimelineTable';
 import { ProductPurchaseHistoryModal } from '../components/repurchase/ProductPurchaseHistoryModal';
 
-type FilterType = 'all' | 'overdue' | 'due_today' | 'upcoming' | 'stocked';
+type FilterType = 'all' | 'overdue' | 'due_today' | 'upcoming';
+type ViewMode = 'rows' | 'columns';
 
-interface ShopReorderRow {
+interface ShopReorderData {
   customer: Customer;
   summary: CustomerRepurchaseSummary;
+  sales: Sale[];
   salesCount: number;
   totalSalesValue: number;
-  mostUrgentProduct?: ProductRepurchasePrediction;
+  productHistories: Map<string, ProductPurchaseTransaction[]>;
 }
 
 export default function ReorderPage() {
-  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { currentOrg } = useTenancy();
   const { customers, sales, items, loading } = useRealtimeData();
@@ -57,15 +57,14 @@ export default function ReorderPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<FilterType>('all');
   const [routeFilter, setRouteFilter] = useState<string>('all');
-  const [selectedShopId, setSelectedShopId] = useState<string | null>(null);
-  const [expandedShopIds, setExpandedShopIds] = useState<Record<string, boolean>>({});
+  const [viewMode, setViewMode] = useState<ViewMode>('rows');
   const [selectedProductForHistory, setSelectedProductForHistory] = useState<{
     customer: Customer;
     prediction: ProductRepurchasePrediction;
   } | null>(null);
 
-  // Compute reorder summaries for all shops
-  const allShopRows: ShopReorderRow[] = useMemo(() => {
+  // Compute reorder data for each shop
+  const allShopsData: ShopReorderData[] = useMemo(() => {
     if (!customers || customers.length === 0) return [];
 
     return customers.map((cust) => {
@@ -73,20 +72,27 @@ export default function ReorderPage() {
       const summary = calculateRepurchasePredictions(custSales, productCatalogMap, cust.id, new Date());
       const totalSalesValue = custSales.reduce((acc, s) => acc + (s.totalAmount || 0), 0);
 
-      // Most urgent product: top item after sorting by urgency in calculateRepurchasePredictions
-      const mostUrgentProduct = summary.predictions.length > 0 ? summary.predictions[0] : undefined;
+      // Precalculate history for each prediction
+      const productHistories = new Map<string, ProductPurchaseTransaction[]>();
+      for (const pred of summary.predictions) {
+        productHistories.set(
+          pred.itemId,
+          getProductPurchaseHistory(custSales, cust.id, pred.itemId, pred.unit)
+        );
+      }
 
       return {
         customer: cust,
         summary,
+        sales: custSales,
         salesCount: custSales.length,
         totalSalesValue,
-        mostUrgentProduct,
+        productHistories,
       };
     });
   }, [customers, sales, productCatalogMap]);
 
-  // Unique routes for filtering
+  // Available routes
   const availableRoutes = useMemo(() => {
     const set = new Set<string>();
     customers?.forEach((c) => {
@@ -95,7 +101,7 @@ export default function ReorderPage() {
     return Array.from(set).sort();
   }, [customers]);
 
-  // Top summary KPIs across all shops
+  // Top summary KPIs
   const kpiStats = useMemo(() => {
     let totalTrackedShops = 0;
     let totalOverdueCount = 0;
@@ -103,7 +109,7 @@ export default function ReorderPage() {
     let totalUpcomingCount = 0;
     let shopsWithOverdue = 0;
 
-    allShopRows.forEach((row) => {
+    allShopsData.forEach((row) => {
       if (row.summary.totalTrackedProducts > 0) {
         totalTrackedShops++;
       }
@@ -122,129 +128,113 @@ export default function ReorderPage() {
       totalUpcomingCount,
       shopsWithOverdue,
     };
-  }, [allShopRows]);
+  }, [allShopsData]);
 
   // Filtered rows
-  const filteredShopRows = useMemo(() => {
-    return allShopRows.filter((row) => {
-      // 1. Status Filter
-      if (statusFilter === 'overdue' && row.summary.overdueCount === 0) return false;
-      if (statusFilter === 'due_today' && row.summary.dueTodayCount === 0) return false;
-      if (statusFilter === 'upcoming' && row.summary.upcomingCount === 0) return false;
-      if (statusFilter === 'stocked' && (row.summary.overdueCount > 0 || row.summary.dueTodayCount > 0)) return false;
+  const filteredShops = useMemo(() => {
+    return allShopsData
+      .filter((row) => {
+        // Status Filter
+        if (statusFilter === 'overdue' && row.summary.overdueCount === 0) return false;
+        if (statusFilter === 'due_today' && row.summary.dueTodayCount === 0) return false;
+        if (statusFilter === 'upcoming' && row.summary.upcomingCount === 0) return false;
 
-      // 2. Route Filter
-      if (routeFilter !== 'all' && (row.customer.route || '').trim() !== routeFilter) return false;
+        // Route Filter
+        if (routeFilter !== 'all' && (row.customer.route || '').trim() !== routeFilter) return false;
 
-      // 3. Search Query
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase().trim();
-        const shop = (row.customer.shopName || '').toLowerCase();
-        const name = (row.customer.name || '').toLowerCase();
-        const phone = (row.customer.phone || '').toLowerCase();
-        const route = (row.customer.route || '').toLowerCase();
-        if (!shop.includes(q) && !name.includes(q) && !phone.includes(q) && !route.includes(q)) {
-          return false;
+        // Search Query
+        if (searchQuery.trim()) {
+          const q = searchQuery.toLowerCase().trim();
+          const shop = (row.customer.shopName || '').toLowerCase();
+          const name = (row.customer.name || '').toLowerCase();
+          const phone = (row.customer.phone || '').toLowerCase();
+          const route = (row.customer.route || '').toLowerCase();
+          if (!shop.includes(q) && !name.includes(q) && !phone.includes(q) && !route.includes(q)) {
+            return false;
+          }
         }
-      }
 
-      return true;
-    }).sort((a, b) => {
-      // Primary sort: shops with overdue orders first, then due today, then upcoming
-      const aUrgency = a.summary.overdueCount * 100 + a.summary.dueTodayCount * 10 + a.summary.upcomingCount;
-      const bUrgency = b.summary.overdueCount * 100 + b.summary.dueTodayCount * 10 + b.summary.upcomingCount;
-      if (aUrgency !== bUrgency) return bUrgency - aUrgency;
+        return true;
+      })
+      .sort((a, b) => {
+        // Urgent first (overdue > due today > upcoming)
+        const aUrgency = a.summary.overdueCount * 100 + a.summary.dueTodayCount * 10 + a.summary.upcomingCount;
+        const bUrgency = b.summary.overdueCount * 100 + b.summary.dueTodayCount * 10 + b.summary.upcomingCount;
+        if (aUrgency !== bUrgency) return bUrgency - aUrgency;
 
-      const aName = a.customer.shopName || a.customer.name;
-      const bName = b.customer.shopName || b.customer.name;
-      return aName.localeCompare(bName);
-    });
-  }, [allShopRows, statusFilter, routeFilter, searchQuery]);
-
-  // Selected shop row for the dedicated history table model below all shops table
-  const selectedShopRow = useMemo(() => {
-    if (selectedShopId) {
-      const found = filteredShopRows.find((r) => r.customer.id === selectedShopId);
-      if (found) return found;
-    }
-    return filteredShopRows.length > 0 ? filteredShopRows[0] : null;
-  }, [filteredShopRows, selectedShopId]);
-
-  // Sync selected shop & auto-expand if customerId passed in searchParams or if top overdue
-  useEffect(() => {
-    const custId = searchParams.get('customerId');
-    if (custId) {
-      setSelectedShopId(custId);
-      setExpandedShopIds((prev) => ({ ...prev, [custId]: true }));
-    } else if (filteredShopRows.length > 0 && !selectedShopId) {
-      const firstActive = filteredShopRows.find((r) => r.summary.totalTrackedProducts > 0);
-      if (firstActive) {
-        setSelectedShopId(firstActive.customer.id);
-        setExpandedShopIds({ [firstActive.customer.id]: true });
-      } else {
-        setSelectedShopId(filteredShopRows[0].customer.id);
-      }
-    }
-  }, [searchParams, filteredShopRows, selectedShopId]);
-
-  const toggleShopExpand = (customerId: string) => {
-    setExpandedShopIds((prev) => ({
-      ...prev,
-      [customerId]: !prev[customerId],
-    }));
-  };
-
-  const handleExpandAll = () => {
-    const allExpanded: Record<string, boolean> = {};
-    filteredShopRows.forEach((r) => {
-      allExpanded[r.customer.id] = true;
-    });
-    setExpandedShopIds(allExpanded);
-  };
-
-  const handleCollapseAll = () => {
-    setExpandedShopIds({});
-  };
+        const aName = a.customer.shopName || a.customer.name;
+        const bName = b.customer.shopName || b.customer.name;
+        return aName.localeCompare(bName);
+      });
+  }, [allShopsData, statusFilter, routeFilter, searchQuery]);
 
   if (loading) {
     return (
       <div className="p-8 text-center text-zinc-500 font-medium">
         <RotateCcw className="w-6 h-6 animate-spin mx-auto text-orange-500 mb-2" />
-        Loading reorder prediction timelines...
+        Loading shop reorder predictions...
       </div>
     );
   }
 
   return (
-    <div className="space-y-6 font-sans pb-16">
+    <div className="space-y-5 font-sans pb-16">
       {/* 1. Header Bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2.5">
-            <div className="w-10 h-10 rounded-2xl bg-orange-500 text-white flex items-center justify-center shadow-md shadow-orange-500/20">
-              <Repeat className="w-5 h-5" />
-            </div>
-            <div>
-              <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-zinc-900">
-                Shop Reorder Hub
-              </h2>
-              <p className="text-xs sm:text-sm text-zinc-500 mt-0.5">
-                Rolling repurchase predictions, past timelines & consumption intervals across all shops.
-              </p>
-            </div>
+        <div className="flex items-center gap-2.5">
+          <div className="w-10 h-10 rounded-2xl bg-orange-500 text-white flex items-center justify-center shadow-md shadow-orange-500/20 shrink-0">
+            <Repeat className="w-5 h-5" />
+          </div>
+          <div>
+            <h2 className="text-xl sm:text-2xl font-black tracking-tight text-zinc-900">
+              Shop Reorder Timelines
+            </h2>
+            <p className="text-xs text-zinc-500 mt-0.5">
+              Consolidated repurchase history, consumption rates and next order predictions across all shops.
+            </p>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
+          {/* View Mode Toggle: Row vs Column */}
+          <div className="flex items-center bg-zinc-100 p-1 rounded-xl border border-zinc-200">
+            <button
+              type="button"
+              onClick={() => setViewMode('rows')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                viewMode === 'rows'
+                  ? 'bg-white text-zinc-900 shadow-xs'
+                  : 'text-zinc-500 hover:text-zinc-900'
+              }`}
+              title="Single table with shop header row and product history columns below"
+            >
+              <LayoutList className="w-3.5 h-3.5" />
+              <span>Table</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('columns')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                viewMode === 'columns'
+                  ? 'bg-white text-zinc-900 shadow-xs'
+                  : 'text-zinc-500 hover:text-zinc-900'
+              }`}
+              title="Shops as 1st row columns with history below"
+            >
+              <Columns3 className="w-3.5 h-3.5" />
+              <span>Shop Columns</span>
+            </button>
+          </div>
+
           <Link
             to="/customers"
             className="px-3.5 py-2 rounded-xl border border-zinc-200 bg-white text-xs font-semibold text-zinc-700 hover:bg-zinc-50 transition-colors shadow-2xs"
           >
-            Manage Customers
+            Customers
           </Link>
           <Link
             to="/sales/new"
-            className="flex items-center gap-1.5 px-4 py-2 bg-orange-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-orange-500/20 hover:bg-orange-600 transition-all active:scale-[0.98]"
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-orange-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-orange-500/20 hover:bg-orange-600 transition-all active:scale-[0.98]"
           >
             <ShoppingCart className="w-3.5 h-3.5" />
             <span>New Sale</span>
@@ -253,89 +243,70 @@ export default function ReorderPage() {
       </div>
 
       {/* 2. Top Summary KPI Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
-        {/* Card 1: Total Shops */}
-        <div className="p-3.5 sm:p-4 rounded-2xl border border-zinc-200/80 bg-white shadow-xs">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="p-3.5 rounded-2xl border border-zinc-200 bg-white shadow-xs">
           <div className="flex items-center justify-between text-zinc-400">
             <span className="text-[10px] font-bold uppercase tracking-wider">Tracked Shops</span>
             <Building2 className="w-4 h-4 text-zinc-500" />
           </div>
-          <p className="text-xl sm:text-2xl font-black text-zinc-900 mt-1">
-            {kpiStats.totalTrackedShops}
-          </p>
-          <p className="text-[11px] text-zinc-400 mt-0.5">
-            of {customers?.length || 0} total registered
-          </p>
+          <p className="text-xl sm:text-2xl font-black text-zinc-900 mt-1">{kpiStats.totalTrackedShops}</p>
+          <p className="text-[11px] text-zinc-400 mt-0.5">of {customers?.length || 0} total</p>
         </div>
 
-        {/* Card 2: Overdue Orders */}
         <div
           onClick={() => setStatusFilter(statusFilter === 'overdue' ? 'all' : 'overdue')}
-          className={`p-3.5 sm:p-4 rounded-2xl border transition-all cursor-pointer shadow-xs ${
+          className={`p-3.5 rounded-2xl border transition-all cursor-pointer shadow-xs ${
             statusFilter === 'overdue'
               ? 'bg-rose-50 border-rose-300 ring-2 ring-rose-400/20'
-              : 'border-zinc-200/80 bg-white hover:border-rose-200'
+              : 'border-zinc-200 bg-white hover:border-rose-200'
           }`}
         >
           <div className="flex items-center justify-between text-rose-600">
             <span className="text-[10px] font-bold uppercase tracking-wider">Overdue Orders</span>
             <AlertTriangle className="w-4 h-4 text-rose-500" />
           </div>
-          <p className="text-xl sm:text-2xl font-black text-rose-700 mt-1">
-            {kpiStats.totalOverdueCount}
-          </p>
+          <p className="text-xl sm:text-2xl font-black text-rose-700 mt-1">{kpiStats.totalOverdueCount}</p>
           <p className="text-[11px] text-rose-600/80 font-medium mt-0.5">
             across {kpiStats.shopsWithOverdue} shop{kpiStats.shopsWithOverdue === 1 ? '' : 's'}
           </p>
         </div>
 
-        {/* Card 3: Due Today */}
         <div
           onClick={() => setStatusFilter(statusFilter === 'due_today' ? 'all' : 'due_today')}
-          className={`p-3.5 sm:p-4 rounded-2xl border transition-all cursor-pointer shadow-xs ${
+          className={`p-3.5 rounded-2xl border transition-all cursor-pointer shadow-xs ${
             statusFilter === 'due_today'
               ? 'bg-amber-50 border-amber-300 ring-2 ring-amber-400/20'
-              : 'border-zinc-200/80 bg-white hover:border-amber-200'
+              : 'border-zinc-200 bg-white hover:border-amber-200'
           }`}
         >
           <div className="flex items-center justify-between text-amber-700">
             <span className="text-[10px] font-bold uppercase tracking-wider">Due Today</span>
             <Clock className="w-4 h-4 text-amber-500" />
           </div>
-          <p className="text-xl sm:text-2xl font-black text-amber-800 mt-1">
-            {kpiStats.totalDueTodayCount}
-          </p>
-          <p className="text-[11px] text-amber-700/80 font-medium mt-0.5">
-            Reorder dispatch ready
-          </p>
+          <p className="text-xl sm:text-2xl font-black text-amber-800 mt-1">{kpiStats.totalDueTodayCount}</p>
+          <p className="text-[11px] text-amber-700/80 font-medium mt-0.5">Dispatch ready</p>
         </div>
 
-        {/* Card 4: Upcoming */}
         <div
           onClick={() => setStatusFilter(statusFilter === 'upcoming' ? 'all' : 'upcoming')}
-          className={`p-3.5 sm:p-4 rounded-2xl border transition-all cursor-pointer shadow-xs ${
+          className={`p-3.5 rounded-2xl border transition-all cursor-pointer shadow-xs ${
             statusFilter === 'upcoming'
               ? 'bg-emerald-50 border-emerald-300 ring-2 ring-emerald-400/20'
-              : 'border-zinc-200/80 bg-white hover:border-emerald-200'
+              : 'border-zinc-200 bg-white hover:border-emerald-200'
           }`}
         >
           <div className="flex items-center justify-between text-emerald-700">
             <span className="text-[10px] font-bold uppercase tracking-wider">Upcoming (7d)</span>
             <CalendarCheck className="w-4 h-4 text-emerald-500" />
           </div>
-          <p className="text-xl sm:text-2xl font-black text-emerald-700 mt-1">
-            {kpiStats.totalUpcomingCount}
-          </p>
-          <p className="text-[11px] text-emerald-600/80 font-medium mt-0.5">
-            Expected on schedule
-          </p>
+          <p className="text-xl sm:text-2xl font-black text-emerald-700 mt-1">{kpiStats.totalUpcomingCount}</p>
+          <p className="text-[11px] text-emerald-600/80 font-medium mt-0.5">On schedule</p>
         </div>
       </div>
 
-      {/* 3. Toolbar: Search, Filters & Expand Controls */}
-      <div className="rounded-2xl border border-zinc-200/80 bg-white p-3.5 sm:p-4 shadow-xs space-y-3">
+      {/* 3. Toolbar: Search, Filters */}
+      <div className="rounded-2xl border border-zinc-200 bg-white p-3 sm:p-4 shadow-xs space-y-3">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          {/* Search Box */}
           <div className="relative flex-1">
             <Search className="w-4 h-4 text-zinc-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
             <input
@@ -347,7 +318,6 @@ export default function ReorderPage() {
             />
           </div>
 
-          {/* Route Filter Dropdown if routes available */}
           {availableRoutes.length > 0 && (
             <div className="shrink-0 flex items-center gap-1.5">
               <span className="text-xs font-semibold text-zinc-500">Route:</span>
@@ -365,24 +335,6 @@ export default function ReorderPage() {
               </select>
             </div>
           )}
-
-          {/* Expand / Collapse All */}
-          <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-auto">
-            <button
-              type="button"
-              onClick={handleExpandAll}
-              className="px-2.5 py-1.5 rounded-lg border border-zinc-200 bg-zinc-50 hover:bg-zinc-100 text-[11px] font-semibold text-zinc-700 transition-colors"
-            >
-              Expand All
-            </button>
-            <button
-              type="button"
-              onClick={handleCollapseAll}
-              className="px-2.5 py-1.5 rounded-lg border border-zinc-200 bg-zinc-50 hover:bg-zinc-100 text-[11px] font-semibold text-zinc-700 transition-colors"
-            >
-              Collapse All
-            </button>
-          </div>
         </div>
 
         {/* Filter Pills */}
@@ -396,7 +348,7 @@ export default function ReorderPage() {
                 : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
             }`}
           >
-            All Shops ({allShopRows.length})
+            All Shops ({allShopsData.length})
           </button>
           <button
             type="button"
@@ -408,7 +360,7 @@ export default function ReorderPage() {
             }`}
           >
             <span className="w-1.5 h-1.5 rounded-full bg-rose-500 inline-block" />
-            <span>Overdue Reorders ({allShopRows.filter((r) => r.summary.overdueCount > 0).length})</span>
+            <span>Overdue Reorders ({allShopsData.filter((r) => r.summary.overdueCount > 0).length})</span>
           </button>
           <button
             type="button"
@@ -420,7 +372,7 @@ export default function ReorderPage() {
             }`}
           >
             <span className="w-1.5 h-1.5 rounded-full bg-amber-500 inline-block" />
-            <span>Due Today ({allShopRows.filter((r) => r.summary.dueTodayCount > 0).length})</span>
+            <span>Due Today ({allShopsData.filter((r) => r.summary.dueTodayCount > 0).length})</span>
           </button>
           <button
             type="button"
@@ -432,231 +384,288 @@ export default function ReorderPage() {
             }`}
           >
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
-            <span>Upcoming ({allShopRows.filter((r) => r.summary.upcomingCount > 0).length})</span>
+            <span>Upcoming ({allShopsData.filter((r) => r.summary.upcomingCount > 0).length})</span>
           </button>
         </div>
       </div>
 
-      {/* 4. Master Table Model: All Shops with Expandable History Table Below */}
-      <div className="rounded-2xl border border-zinc-200/90 bg-white shadow-xs overflow-hidden">
-        {filteredShopRows.length === 0 ? (
-          <div className="p-12 text-center text-zinc-500 space-y-2">
-            <Building2 className="w-10 h-10 text-zinc-300 mx-auto mb-2" />
-            <p className="text-sm font-bold text-zinc-800">No shops match the selected filter</p>
-            <p className="text-xs text-zinc-400">Try clearing filters or searching with a different keyword.</p>
-          </div>
-        ) : (
+      {/* 4. ONLY ONE TABLE ON THE PAGE */}
+      {filteredShops.length === 0 ? (
+        <div className="rounded-2xl border border-zinc-200 bg-white p-12 text-center text-zinc-500 space-y-2">
+          <Building2 className="w-10 h-10 text-zinc-300 mx-auto mb-2" />
+          <p className="text-sm font-bold text-zinc-800">No shops match the selected filter</p>
+          <p className="text-xs text-zinc-400">Try clearing filters or searching with a different keyword.</p>
+        </div>
+      ) : viewMode === 'rows' ? (
+        /* ========================================================================= */
+        /* VIEW MODE 1: SINGLE UNIFIED TABLE                                         */
+        /* 1st Row of each shop = Shop Name & details                                */
+        /* Rows below the shop name = Product reorder history in columns             */
+        /* ========================================================================= */
+        <div className="rounded-2xl border border-zinc-200/90 bg-white shadow-xs overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs min-w-[880px]">
+            <table className="w-full text-left text-xs min-w-[940px]">
               <thead>
-                <tr className="bg-zinc-50 border-b border-zinc-200 text-[10px] font-bold uppercase tracking-wider text-zinc-400">
-                  <th className="py-3 px-3.5 w-10 text-center">#</th>
-                  <th className="py-3 px-3.5 min-w-[220px]">Shop & Customer</th>
-                  <th className="py-3 px-3 min-w-[160px]">Reorder Status</th>
-                  <th className="py-3 px-3 min-w-[180px]">Most Urgent Product Due</th>
-                  <th className="py-3 px-3 text-center w-28">Tracked Items</th>
-                  <th className="py-3 px-3 text-right w-32">Balance Due</th>
-                  <th className="py-3 px-3.5 text-right w-36">Actions</th>
+                <tr className="bg-zinc-100/80 border-b border-zinc-200 text-[10px] font-bold uppercase tracking-wider text-zinc-500">
+                  <th className="py-2.5 px-3.5 sticky left-0 bg-zinc-100/90 z-10 w-48 shadow-[1px_0_0_0_rgba(0,0,0,0.06)]">
+                    Product / Item
+                  </th>
+                  <th className="py-2.5 px-3 w-32">Status</th>
+                  <th className="py-2.5 px-3 w-36">Next Predicted Order</th>
+                  <th className="py-2.5 px-3 w-28">Daily Consumption</th>
+                  <th className="py-2.5 px-3 w-24">Avg Interval</th>
+                  <th className="py-2.5 px-3 w-36">Last Purchase</th>
+                  <th className="py-2.5 px-3 min-w-[340px]">Purchase Timelines & Cycles</th>
+                  <th className="py-2.5 px-3.5 text-right w-24">Action</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-200/70 font-medium text-zinc-700">
-                {filteredShopRows.map((row, index) => {
-                  const isExpanded = Boolean(expandedShopIds[row.customer.id]);
-                  const isSelected = selectedShopRow?.customer.id === row.customer.id;
-                  const custSales = (sales || []).filter(
-                    (s) => s.customerId === row.customer.id && s.status !== 'cancelled'
-                  );
+              <tbody className="divide-y divide-zinc-100 font-medium text-zinc-700">
+                {filteredShops.map((shopData) => {
+                  const shopName = shopData.customer.shopName || shopData.customer.name;
+                  const predictions = shopData.summary.predictions;
 
                   return (
-                    <React.Fragment key={row.customer.id}>
-                      {/* Master Shop Row */}
-                      <tr
-                        onClick={() => {
-                          setSelectedShopId(row.customer.id);
-                        }}
-                        className={`hover:bg-orange-50/20 transition-all cursor-pointer select-none ${
-                          isSelected ? 'bg-orange-50/50 ring-1 ring-inset ring-orange-300' : isExpanded ? 'bg-orange-50/30' : ''
-                        }`}
-                      >
-                        {/* Expand Icon */}
-                        <td className="py-3.5 px-3.5 text-center text-zinc-400">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSelectedShopId(row.customer.id);
-                              toggleShopExpand(row.customer.id);
-                            }}
-                            className="p-1 rounded-md hover:bg-zinc-200/70 text-zinc-500 transition-colors"
-                            title={isExpanded ? 'Collapse reorder history' : 'Expand reorder history'}
-                          >
-                            {isExpanded ? (
-                              <ChevronUp className="w-4 h-4 text-orange-600 font-bold" />
-                            ) : (
-                              <ChevronDown className="w-4 h-4" />
-                            )}
-                          </button>
-                        </td>
-
-                        {/* Shop & Customer */}
-                        <td className="py-3.5 px-3.5">
-                          <div className="flex items-center gap-2">
-                            <span className="font-extrabold text-sm text-zinc-900 group-hover:text-orange-600 transition-colors">
-                              {row.customer.shopName || row.customer.name}
-                            </span>
-                            {row.customer.shopName && row.customer.name && (
-                              <span className="text-[11px] text-zinc-500 font-medium">
-                                ({row.customer.name})
-                              </span>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-2 text-[11px] text-zinc-400 mt-0.5">
-                            {row.customer.phone && (
-                              <span className="flex items-center gap-1">
-                                <Phone className="w-3 h-3" />
-                                <span>{row.customer.phone}</span>
-                              </span>
-                            )}
-                            {row.customer.route && (
-                              <span className="flex items-center gap-1 font-medium text-zinc-500 bg-zinc-100 px-1.5 py-0.2 rounded">
-                                <MapPin className="w-2.5 h-2.5" />
-                                <span>{row.customer.route}</span>
-                              </span>
-                            )}
-                          </div>
-                        </td>
-
-                        {/* Reorder Status */}
-                        <td className="py-3.5 px-3">
-                          {row.summary.overdueCount > 0 ? (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-extrabold bg-rose-50 text-rose-700 border border-rose-200">
-                              <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
-                              <span>{row.summary.overdueCount} Overdue</span>
-                            </span>
-                          ) : row.summary.dueTodayCount > 0 ? (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-extrabold bg-amber-50 text-amber-800 border border-amber-200">
-                              <span className="w-2 h-2 rounded-full bg-amber-500" />
-                              <span>{row.summary.dueTodayCount} Due Today</span>
-                            </span>
-                          ) : row.summary.upcomingCount > 0 ? (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
-                              <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                              <span>{row.summary.upcomingCount} Upcoming</span>
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-medium bg-zinc-100 text-zinc-500">
-                              <span>No active alerts</span>
-                            </span>
-                          )}
-                        </td>
-
-                        {/* Most Urgent Product Due */}
-                        <td className="py-3.5 px-3">
-                          {row.mostUrgentProduct ? (
-                            <div>
-                              <div className="flex items-center gap-1.5">
-                                <span className="font-bold text-zinc-800">
-                                  {row.mostUrgentProduct.itemName}
-                                </span>
-                                <span className="text-[9px] font-semibold px-1 py-0.2 rounded bg-zinc-100 text-zinc-600">
-                                  {row.mostUrgentProduct.unit}
-                                </span>
+                    <React.Fragment key={shopData.customer.id}>
+                      {/* 1st ROW: SHOP NAME & DETAILS BANNER */}
+                      <tr className="bg-zinc-50/90 border-t-2 border-zinc-200/80 hover:bg-zinc-100/60 transition-colors">
+                        <td colSpan={8} className="py-2.5 px-3.5">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                            <div className="flex items-center gap-2.5 flex-wrap">
+                              <div className="w-7 h-7 rounded-lg bg-orange-500 text-white flex items-center justify-center shadow-2xs shrink-0">
+                                <Store className="w-3.5 h-3.5" />
                               </div>
-                              <span className="text-[10px] text-zinc-500 block mt-0.5 font-medium">
-                                {row.mostUrgentProduct.statusLabel} • Next: {row.mostUrgentProduct.predictedNextPurchaseDate ? format(new Date(row.mostUrgentProduct.predictedNextPurchaseDate), 'dd MMM') : '—'}
+                              <span className="font-black text-sm text-zinc-900 tracking-tight">
+                                {shopName}
                               </span>
+                              {shopData.customer.shopName && shopData.customer.name && (
+                                <span className="text-xs text-zinc-500 font-medium">
+                                  ({shopData.customer.name})
+                                </span>
+                              )}
+                              {shopData.customer.phone && (
+                                <a
+                                  href={`tel:${shopData.customer.phone}`}
+                                  className="flex items-center gap-1 text-[11px] text-zinc-500 hover:text-orange-600 bg-white border border-zinc-200/70 px-2 py-0.5 rounded-lg transition-colors"
+                                  title="Call customer"
+                                >
+                                  <Phone className="w-3 h-3 text-zinc-400" />
+                                  <span>{shopData.customer.phone}</span>
+                                </a>
+                              )}
+                              {shopData.customer.route && (
+                                <span className="flex items-center gap-1 text-[10px] font-bold text-zinc-600 bg-zinc-200/70 px-2 py-0.5 rounded-lg">
+                                  <MapPin className="w-2.5 h-2.5" />
+                                  <span>{shopData.customer.route}</span>
+                                </span>
+                              )}
+                              {shopData.summary.overdueCount > 0 ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-100 text-rose-800 border border-rose-200">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />
+                                  <span>{shopData.summary.overdueCount} Overdue</span>
+                                </span>
+                              ) : shopData.summary.dueTodayCount > 0 ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-800 border border-amber-200">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                                  <span>{shopData.summary.dueTodayCount} Due Today</span>
+                                </span>
+                              ) : shopData.summary.upcomingCount > 0 ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                  <span>{shopData.summary.upcomingCount} Upcoming</span>
+                                </span>
+                              ) : null}
                             </div>
-                          ) : (
-                            <span className="text-zinc-400 text-xs">—</span>
-                          )}
-                        </td>
 
-                        {/* Tracked Items Count */}
-                        <td className="py-3.5 px-3 text-center">
-                          <span className="font-extrabold text-zinc-800 text-xs font-mono">
-                            {row.summary.totalTrackedProducts}
-                          </span>
-                        </td>
-
-                        {/* Balance Due */}
-                        <td className="py-3.5 px-3 text-right">
-                          <span className={`font-extrabold font-mono text-xs ${
-                            (row.customer.balance || 0) > 0 ? 'text-red-600' : 'text-emerald-600'
-                          }`}>
-                            {formatStatCurrency(row.customer.balance || 0, currentOrg?.settings.currency)}
-                          </span>
-                        </td>
-
-                        {/* Action buttons */}
-                        <td className="py-3.5 px-3.5 text-right">
-                          <div className="flex items-center justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setSelectedShopId(row.customer.id);
-                                toggleShopExpand(row.customer.id);
-                              }}
-                              className={`px-2.5 py-1 rounded-lg border text-[11px] font-semibold transition-colors shadow-2xs ${
-                                isSelected
-                                  ? 'border-orange-400 bg-orange-50 text-orange-700'
-                                  : 'border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700'
-                              }`}
-                              title={isExpanded ? 'Hide history table' : 'Show reorder history table'}
-                            >
-                              {isExpanded ? 'Hide Table' : 'View History'}
-                            </button>
-
-                            <Link
-                              to={`/sales/new?customerId=${row.customer.id}`}
-                              className="p-1.5 rounded-lg bg-orange-500 hover:bg-orange-600 text-white transition-colors"
-                              title="Create sale for this shop"
-                            >
-                              <ShoppingCart className="w-3.5 h-3.5" />
-                            </Link>
-
-                            <Link
-                              to={`/customers/${row.customer.id}`}
-                              className="p-1.5 rounded-lg border border-zinc-200 text-zinc-500 hover:text-zinc-900 hover:bg-zinc-50 transition-colors"
-                              title="Open Customer Profile & Ledger"
-                            >
-                              <ExternalLink className="w-3.5 h-3.5" />
-                            </Link>
+                            <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+                              <span className={`text-[11px] font-extrabold font-mono px-2 py-0.5 rounded-lg ${
+                                (shopData.customer.balance || 0) > 0 ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'
+                              }`}>
+                                Bal: {formatStatCurrency(shopData.customer.balance || 0, currentOrg?.settings.currency)}
+                              </span>
+                              <Link
+                                to={`/sales/new?customerId=${shopData.customer.id}`}
+                                className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-orange-500 hover:bg-orange-600 text-white text-[11px] font-bold shadow-2xs transition-colors"
+                                title="Create new sale for this shop"
+                              >
+                                <ShoppingCart className="w-3 h-3" />
+                                <span>Sale</span>
+                              </Link>
+                              <Link
+                                to={`/customers/${shopData.customer.id}`}
+                                className="p-1 rounded-lg border border-zinc-200 text-zinc-400 hover:text-zinc-800 bg-white hover:bg-zinc-50 transition-colors"
+                                title="Open Customer Profile & Ledger"
+                              >
+                                <ExternalLink className="w-3.5 h-3.5" />
+                              </Link>
+                            </div>
                           </div>
                         </td>
                       </tr>
 
-                      {/* Expandable History Table Model: Directly Below that shop row */}
-                      {isExpanded && (
-                        <tr className="bg-orange-50/20 border-b-2 border-orange-200/80">
-                          <td colSpan={7} className="p-3 sm:p-5">
-                            <div className="space-y-3">
-                              <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-2">
-                                  <Repeat className="w-4 h-4 text-orange-600" />
-                                  <h4 className="text-xs sm:text-sm font-extrabold text-zinc-900">
-                                    Reorder Timelines & Consumption History for {row.customer.shopName || row.customer.name}
-                                  </h4>
-                                </div>
-                                <span className="text-[11px] text-zinc-500 font-medium">
-                                  Click any product to inspect past purchase dates & cycle intervals
-                                </span>
-                              </div>
-
-                              <CustomerReorderTimelineTable
-                                sales={custSales}
-                                productCatalog={productCatalogMap}
-                                customerId={row.customer.id}
-                                customerName={row.customer.name}
-                                onProductClick={(pred) => {
-                                  setSelectedProductForHistory({
-                                    customer: row.customer,
-                                    prediction: pred,
-                                  });
-                                }}
-                              />
-                            </div>
+                      {/* ROWS BELOW SHOP NAME: PRODUCT REORDER HISTORY IN COLUMNS */}
+                      {predictions.length === 0 ? (
+                        <tr className="hover:bg-zinc-50/50">
+                          <td colSpan={8} className="py-3 px-4 text-center text-zinc-400 text-xs italic">
+                            No repurchase history yet (new shop or single order). Subsequent orders will automatically generate reorder timelines here.
                           </td>
                         </tr>
+                      ) : (
+                        predictions.map((pred) => {
+                          const history = shopData.productHistories.get(pred.itemId) || [];
+
+                          let badgeColor = 'bg-zinc-100 text-zinc-700 border-zinc-200';
+                          let dotColor = 'bg-zinc-400';
+                          if (pred.status === 'upcoming') {
+                            badgeColor = 'bg-emerald-50 text-emerald-800 border-emerald-200';
+                            dotColor = 'bg-emerald-500';
+                          } else if (pred.status === 'due_today') {
+                            badgeColor = 'bg-amber-50 text-amber-900 border-amber-300';
+                            dotColor = 'bg-amber-500';
+                          } else if (pred.status === 'overdue') {
+                            badgeColor = 'bg-rose-50 text-rose-800 border-rose-300';
+                            dotColor = 'bg-rose-500';
+                          }
+
+                          return (
+                            <tr
+                              key={pred.itemId}
+                              onClick={() =>
+                                setSelectedProductForHistory({
+                                  customer: shopData.customer,
+                                  prediction: pred,
+                                })
+                              }
+                              className="hover:bg-orange-50/20 transition-colors group cursor-pointer"
+                            >
+                              {/* 1. Product Name & Unit (Sticky on left) */}
+                              <td className="py-2.5 px-3.5 sticky left-0 bg-white group-hover:bg-[#fffcf9] transition-colors z-10 shadow-[1px_0_0_0_rgba(0,0,0,0.06)] pl-6">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-extrabold text-xs text-zinc-900 group-hover:text-orange-600 transition-colors">
+                                    {pred.itemName}
+                                  </span>
+                                  <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-zinc-100 text-zinc-600 shrink-0">
+                                    {pred.unit}
+                                  </span>
+                                </div>
+                                {pred.sku && (
+                                  <span className="text-[10px] text-zinc-400 font-mono block mt-0.5">
+                                    {pred.sku}
+                                  </span>
+                                )}
+                              </td>
+
+                              {/* 2. Status */}
+                              <td className="py-2.5 px-3">
+                                <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold border ${badgeColor}`}>
+                                  <span className={`w-1.5 h-1.5 rounded-full ${dotColor}`} />
+                                  <span>{pred.statusLabel}</span>
+                                </span>
+                              </td>
+
+                              {/* 3. Next Predicted Order */}
+                              <td className="py-2.5 px-3">
+                                <span className="font-black text-zinc-900 block font-mono text-[11px]">
+                                  {pred.predictedNextPurchaseDate
+                                    ? format(new Date(pred.predictedNextPurchaseDate), 'dd MMM yyyy')
+                                    : '—'}
+                                </span>
+                                <span className="text-[10px] text-zinc-500 block">
+                                  {pred.estimatedDaysToNextPurchase !== null
+                                    ? `~${Math.round(pred.estimatedDaysToNextPurchase)}d cycle`
+                                    : ''}
+                                </span>
+                              </td>
+
+                              {/* 4. Daily Consumption */}
+                              <td className="py-2.5 px-3">
+                                <span className="font-bold text-zinc-800 font-mono text-xs">
+                                  {formatConsumptionRate(pred.averageDailyConsumption, pred.unit)}
+                                </span>
+                              </td>
+
+                              {/* 5. Avg Interval */}
+                              <td className="py-2.5 px-3">
+                                <span className="font-mono text-zinc-700 text-xs font-semibold">
+                                  {pred.completedCyclesCount > 0
+                                    ? `${(pred.totalCycleDays / pred.completedCyclesCount).toFixed(1)}d`
+                                    : '—'}
+                                </span>
+                              </td>
+
+                              {/* 6. Last Purchase */}
+                              <td className="py-2.5 px-3">
+                                <span className="font-bold text-zinc-900 block text-[11px]">
+                                  {format(new Date(pred.lastPurchaseDate), 'dd MMM yyyy')}
+                                </span>
+                                <span className="text-[10px] font-mono text-zinc-500">
+                                  {pred.lastPurchaseQuantity} {pred.unit}
+                                </span>
+                              </td>
+
+                              {/* 7. Past Reorder Timeline Flow (Scrollable Horizontal Nodes) */}
+                              <td className="py-2.5 px-3">
+                                <div className="flex items-center gap-1.5 overflow-x-auto py-0.5 max-w-[420px]">
+                                  {history.length === 0 ? (
+                                    <span className="text-zinc-400 text-[11px]">No purchases</span>
+                                  ) : (
+                                    history.map((h, i) => (
+                                      <React.Fragment key={h.saleId + i}>
+                                        {i > 0 && h.daysSincePrevious !== null && (
+                                          <div className="flex items-center text-zinc-300 shrink-0">
+                                            <span className="text-[9px] font-mono font-bold px-1 py-0.2 rounded bg-blue-50 text-blue-700 border border-blue-200/60 whitespace-nowrap">
+                                              +{h.daysSincePrevious}d
+                                            </span>
+                                            <ArrowRight className="w-3 h-3 text-zinc-400 mx-0.5" />
+                                          </div>
+                                        )}
+                                        <div className="shrink-0 p-1 rounded-md border border-zinc-200 bg-zinc-50 text-center min-w-[65px]">
+                                          <div className="text-[9px] font-bold text-zinc-800 whitespace-nowrap">
+                                            {format(new Date(h.timestamp), 'dd MMM')}
+                                          </div>
+                                          <div className="text-[9px] font-mono text-zinc-500 whitespace-nowrap">
+                                            {h.quantity} {pred.unit}
+                                          </div>
+                                        </div>
+                                      </React.Fragment>
+                                    ))
+                                  )}
+                                  {pred.predictedNextPurchaseDate && (
+                                    <div className="flex items-center text-zinc-300 shrink-0">
+                                      <ArrowRight className="w-3 h-3 text-orange-400 mx-0.5" />
+                                      <div className="shrink-0 p-1 rounded-md border border-orange-300 bg-orange-50 text-center min-w-[65px]">
+                                        <div className="text-[9px] font-bold text-orange-700 whitespace-nowrap">
+                                          {format(new Date(pred.predictedNextPurchaseDate), 'dd MMM')}
+                                        </div>
+                                        <div className="text-[8px] font-semibold text-orange-600 whitespace-nowrap">
+                                          Next Due
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              </td>
+
+                              {/* 8. Action */}
+                              <td className="py-2.5 px-3.5 text-right">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedProductForHistory({
+                                      customer: shopData.customer,
+                                      prediction: pred,
+                                    });
+                                  }}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-zinc-200 hover:border-orange-300 bg-white hover:bg-orange-50 text-zinc-700 hover:text-orange-700 text-[11px] font-bold shadow-2xs transition-colors"
+                                  title="View complete purchase ledger and intervals"
+                                >
+                                  <History className="w-3 h-3 text-orange-600" />
+                                  <span>History</span>
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })
                       )}
                     </React.Fragment>
                   );
@@ -664,61 +673,171 @@ export default function ReorderPage() {
               </tbody>
             </table>
           </div>
-        )}
-      </div>
+        </div>
+      ) : (
+        /* ========================================================================= */
+        /* VIEW MODE 2: SHOP COLUMNS TABLE                                           */
+        /* 1st Row of columns = Shop Names                                           */
+        /* In column below each shop name = their history                            */
+        /* ========================================================================= */
+        <div className="rounded-2xl border border-zinc-200/90 bg-white shadow-xs overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs min-w-[800px]">
+              <thead>
+                {/* 1st ROW: SHOP NAMES IN COLUMNS */}
+                <tr className="bg-zinc-100 border-b-2 border-zinc-200 text-zinc-900">
+                  {filteredShops.map((shopData) => {
+                    const shopName = shopData.customer.shopName || shopData.customer.name;
+                    return (
+                      <th
+                        key={shopData.customer.id}
+                        className="py-3.5 px-4 min-w-[280px] max-w-[340px] align-top border-r border-zinc-200 last:border-r-0"
+                      >
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between gap-1.5">
+                            <span className="font-black text-sm text-zinc-900 tracking-tight truncate" title={shopName}>
+                              {shopName}
+                            </span>
+                            <Link
+                              to={`/sales/new?customerId=${shopData.customer.id}`}
+                              className="p-1 rounded-md bg-orange-500 hover:bg-orange-600 text-white shrink-0"
+                              title="Create sale for this shop"
+                            >
+                              <ShoppingCart className="w-3 h-3" />
+                            </Link>
+                          </div>
+                          <div className="flex items-center gap-1.5 flex-wrap text-[10px] text-zinc-500">
+                            {shopData.customer.phone && (
+                              <span className="flex items-center gap-0.5">
+                                <Phone className="w-2.5 h-2.5 text-zinc-400" />
+                                <span>{shopData.customer.phone}</span>
+                              </span>
+                            )}
+                            {shopData.customer.route && (
+                              <span className="bg-zinc-200 px-1.5 py-0.2 rounded font-semibold text-zinc-700">
+                                {shopData.customer.route}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center justify-between pt-0.5">
+                            {shopData.summary.overdueCount > 0 ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-100 text-rose-800 border border-rose-200">
+                                <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />
+                                <span>{shopData.summary.overdueCount} Overdue</span>
+                              </span>
+                            ) : shopData.summary.dueTodayCount > 0 ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-800 border border-amber-200">
+                                <span>{shopData.summary.dueTodayCount} Due Today</span>
+                              </span>
+                            ) : shopData.summary.upcomingCount > 0 ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                <span>{shopData.summary.upcomingCount} Upcoming</span>
+                              </span>
+                            ) : (
+                              <span className="text-[10px] text-zinc-400">No active alerts</span>
+                            )}
+                            <span className={`text-[10px] font-extrabold font-mono ${
+                              (shopData.customer.balance || 0) > 0 ? 'text-red-600' : 'text-emerald-600'
+                            }`}>
+                              Bal: {formatStatCurrency(shopData.customer.balance || 0, currentOrg?.settings.currency)}
+                            </span>
+                          </div>
+                        </div>
+                      </th>
+                    );
+                  })}
+                </tr>
+              </thead>
+              <tbody>
+                {/* IN COLUMN: THEIR HISTORY BELOW THEIR SHOP NAME */}
+                <tr className="align-top divide-x divide-zinc-200">
+                  {filteredShops.map((shopData) => {
+                    const predictions = shopData.summary.predictions;
 
-      {/* 5. Reorder History Table Model for Selected Shop (Positioned Directly Below All Shops Table) */}
-      {selectedShopRow && (
-        <div id="selected-shop-history-section" className="space-y-3 pt-2">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-1">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-orange-500 text-white flex items-center justify-center shadow-xs">
-                <Repeat className="w-4 h-4" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <h3 className="text-base sm:text-lg font-black text-zinc-900">
-                    {selectedShopRow.customer.shopName || selectedShopRow.customer.name} — Reorder Timelines & Purchase History
-                  </h3>
-                  {selectedShopRow.customer.shopName && selectedShopRow.customer.name && (
-                    <span className="text-xs text-zinc-500 font-medium">
-                      ({selectedShopRow.customer.name})
-                    </span>
-                  )}
-                  {selectedShopRow.summary.overdueCount > 0 ? (
-                    <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-200">
-                      {selectedShopRow.summary.overdueCount} Overdue
-                    </span>
-                  ) : selectedShopRow.summary.dueTodayCount > 0 ? (
-                    <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
-                      {selectedShopRow.summary.dueTodayCount} Due Today
-                    </span>
-                  ) : null}
-                </div>
-                <p className="text-xs text-zinc-500 mt-0.5">
-                  Historical purchase dates, interval cycles, consumption rates, and predicted next reorder dates.
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold text-zinc-500 bg-zinc-100 px-2.5 py-1 rounded-lg">
-                Selected Shop History
-              </span>
-            </div>
+                    return (
+                      <td key={shopData.customer.id} className="p-3 space-y-2.5 bg-zinc-50/30">
+                        {predictions.length === 0 ? (
+                          <div className="p-4 text-center text-zinc-400 text-xs italic bg-white rounded-xl border border-zinc-200">
+                            No repurchase history yet
+                          </div>
+                        ) : (
+                          predictions.map((pred) => {
+                            let badgeStyle = 'bg-zinc-100 text-zinc-700 border-zinc-200';
+                            if (pred.status === 'upcoming') {
+                              badgeStyle = 'bg-emerald-50 text-emerald-800 border-emerald-200';
+                            } else if (pred.status === 'due_today') {
+                              badgeStyle = 'bg-amber-50 text-amber-900 border-amber-300';
+                            } else if (pred.status === 'overdue') {
+                              badgeStyle = 'bg-rose-50 text-rose-800 border-rose-300';
+                            }
+
+                            return (
+                              <div
+                                key={pred.itemId}
+                                onClick={() =>
+                                  setSelectedProductForHistory({
+                                    customer: shopData.customer,
+                                    prediction: pred,
+                                  })
+                                }
+                                className="p-2.5 rounded-xl border border-zinc-200 bg-white hover:border-orange-300 hover:shadow-xs transition-all cursor-pointer group"
+                                title="Click to view full purchase history & intervals"
+                              >
+                                <div className="flex items-center justify-between gap-1 mb-1">
+                                  <div className="flex items-center gap-1.5 min-w-0">
+                                    <span className="font-black text-xs text-zinc-900 group-hover:text-orange-600 transition-colors truncate">
+                                      {pred.itemName}
+                                    </span>
+                                    <span className="text-[9px] font-bold px-1 rounded bg-zinc-100 text-zinc-600 shrink-0">
+                                      {pred.unit}
+                                    </span>
+                                  </div>
+                                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border shrink-0 ${badgeStyle}`}>
+                                    {pred.statusLabel}
+                                  </span>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-1.5 text-[10px] text-zinc-600 pt-1 border-t border-zinc-100 mt-1.5 font-mono">
+                                  <div>
+                                    <span className="text-zinc-400 block text-[9px] uppercase font-sans">Next Due</span>
+                                    <span className="font-black text-zinc-900">
+                                      {pred.predictedNextPurchaseDate
+                                        ? format(new Date(pred.predictedNextPurchaseDate), 'dd MMM yyyy')
+                                        : '—'}
+                                    </span>
+                                  </div>
+                                  <div>
+                                    <span className="text-zinc-400 block text-[9px] uppercase font-sans">Consumption</span>
+                                    <span className="font-bold text-zinc-800">
+                                      {formatConsumptionRate(pred.averageDailyConsumption, pred.unit)}
+                                    </span>
+                                  </div>
+                                  <div>
+                                    <span className="text-zinc-400 block text-[9px] uppercase font-sans">Avg Interval</span>
+                                    <span className="font-bold text-zinc-800">
+                                      {pred.completedCyclesCount > 0
+                                        ? `${(pred.totalCycleDays / pred.completedCyclesCount).toFixed(1)}d`
+                                        : '—'}
+                                    </span>
+                                  </div>
+                                  <div>
+                                    <span className="text-zinc-400 block text-[9px] uppercase font-sans">Last Order</span>
+                                    <span className="font-bold text-zinc-800">
+                                      {format(new Date(pred.lastPurchaseDate), 'dd MMM')} ({pred.lastPurchaseQuantity} {pred.unit})
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              </tbody>
+            </table>
           </div>
-
-          <CustomerReorderTimelineTable
-            sales={(sales || []).filter((s) => s.customerId === selectedShopRow.customer.id && s.status !== 'cancelled')}
-            productCatalog={productCatalogMap}
-            customerId={selectedShopRow.customer.id}
-            customerName={selectedShopRow.customer.name}
-            onProductClick={(pred) => {
-              setSelectedProductForHistory({
-                customer: selectedShopRow.customer,
-                prediction: pred,
-              });
-            }}
-          />
         </div>
       )}
 
