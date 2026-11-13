@@ -101,35 +101,6 @@ export default function ReorderPage() {
     return Array.from(set).sort();
   }, [customers]);
 
-  // Top summary KPIs
-  const kpiStats = useMemo(() => {
-    let totalTrackedShops = 0;
-    let totalOverdueCount = 0;
-    let totalDueTodayCount = 0;
-    let totalUpcomingCount = 0;
-    let shopsWithOverdue = 0;
-
-    allShopsData.forEach((row) => {
-      if (row.summary.totalTrackedProducts > 0) {
-        totalTrackedShops++;
-      }
-      totalOverdueCount += row.summary.overdueCount;
-      totalDueTodayCount += row.summary.dueTodayCount;
-      totalUpcomingCount += row.summary.upcomingCount;
-      if (row.summary.overdueCount > 0) {
-        shopsWithOverdue++;
-      }
-    });
-
-    return {
-      totalTrackedShops,
-      totalOverdueCount,
-      totalDueTodayCount,
-      totalUpcomingCount,
-      shopsWithOverdue,
-    };
-  }, [allShopsData]);
-
   // Filtered rows
   const filteredShops = useMemo(() => {
     return allShopsData
@@ -242,69 +213,7 @@ export default function ReorderPage() {
         </div>
       </div>
 
-      {/* 2. Top Summary KPI Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <div className="p-3.5 rounded-2xl border border-zinc-200 bg-white shadow-xs">
-          <div className="flex items-center justify-between text-zinc-400">
-            <span className="text-[10px] font-bold uppercase tracking-wider">Tracked Shops</span>
-            <Building2 className="w-4 h-4 text-zinc-500" />
-          </div>
-          <p className="text-xl sm:text-2xl font-black text-zinc-900 mt-1">{kpiStats.totalTrackedShops}</p>
-          <p className="text-[11px] text-zinc-400 mt-0.5">of {customers?.length || 0} total</p>
-        </div>
-
-        <div
-          onClick={() => setStatusFilter(statusFilter === 'overdue' ? 'all' : 'overdue')}
-          className={`p-3.5 rounded-2xl border transition-all cursor-pointer shadow-xs ${
-            statusFilter === 'overdue'
-              ? 'bg-rose-50 border-rose-300 ring-2 ring-rose-400/20'
-              : 'border-zinc-200 bg-white hover:border-rose-200'
-          }`}
-        >
-          <div className="flex items-center justify-between text-rose-600">
-            <span className="text-[10px] font-bold uppercase tracking-wider">Overdue Orders</span>
-            <AlertTriangle className="w-4 h-4 text-rose-500" />
-          </div>
-          <p className="text-xl sm:text-2xl font-black text-rose-700 mt-1">{kpiStats.totalOverdueCount}</p>
-          <p className="text-[11px] text-rose-600/80 font-medium mt-0.5">
-            across {kpiStats.shopsWithOverdue} shop{kpiStats.shopsWithOverdue === 1 ? '' : 's'}
-          </p>
-        </div>
-
-        <div
-          onClick={() => setStatusFilter(statusFilter === 'due_today' ? 'all' : 'due_today')}
-          className={`p-3.5 rounded-2xl border transition-all cursor-pointer shadow-xs ${
-            statusFilter === 'due_today'
-              ? 'bg-amber-50 border-amber-300 ring-2 ring-amber-400/20'
-              : 'border-zinc-200 bg-white hover:border-amber-200'
-          }`}
-        >
-          <div className="flex items-center justify-between text-amber-700">
-            <span className="text-[10px] font-bold uppercase tracking-wider">Due Today</span>
-            <Clock className="w-4 h-4 text-amber-500" />
-          </div>
-          <p className="text-xl sm:text-2xl font-black text-amber-800 mt-1">{kpiStats.totalDueTodayCount}</p>
-          <p className="text-[11px] text-amber-700/80 font-medium mt-0.5">Dispatch ready</p>
-        </div>
-
-        <div
-          onClick={() => setStatusFilter(statusFilter === 'upcoming' ? 'all' : 'upcoming')}
-          className={`p-3.5 rounded-2xl border transition-all cursor-pointer shadow-xs ${
-            statusFilter === 'upcoming'
-              ? 'bg-emerald-50 border-emerald-300 ring-2 ring-emerald-400/20'
-              : 'border-zinc-200 bg-white hover:border-emerald-200'
-          }`}
-        >
-          <div className="flex items-center justify-between text-emerald-700">
-            <span className="text-[10px] font-bold uppercase tracking-wider">Upcoming (7d)</span>
-            <CalendarCheck className="w-4 h-4 text-emerald-500" />
-          </div>
-          <p className="text-xl sm:text-2xl font-black text-emerald-700 mt-1">{kpiStats.totalUpcomingCount}</p>
-          <p className="text-[11px] text-emerald-600/80 font-medium mt-0.5">On schedule</p>
-        </div>
-      </div>
-
-      {/* 3. Toolbar: Search, Filters */}
+      {/* Toolbar: Search, Filters */}
       <div className="rounded-2xl border border-zinc-200 bg-white p-3 sm:p-4 shadow-xs space-y-3">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="relative flex-1">
